@@ -1,0 +1,27 @@
+build/
+dist/
+.DS_Store
+
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.key
+*.pem
+local.properties
+
+# Machine-specific reports and pairing screenshots
+design/mac-settings-preview.png
+design-qa.md
+tests/last-results.txt
+
+# Editor / compiler caches
+.idea/
+.gradle/
+.build/
+DerivedData/
+*.xcuserstate
