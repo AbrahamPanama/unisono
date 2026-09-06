@@ -6,7 +6,7 @@ Stream your Mac's system audio to Android over your local network, and listen on
 
 Unísono is a native macOS menu-bar app with a companion Android receiver. It offers adaptive AAC, FLAC compression of 24-bit PCM, and uncompressed Float32 PCM streaming. It encrypts the connection and lets you adjust the shared playback reserve to balance delay and continuity.
 
-**Status: experimental personal-use prototype, version 0.2.4 (build 7).** Exact 24-bit FLAC transport and playback have been checked in the Android emulator. Physical S25 FLAC, acoustic synchronization, elimination of popping, and long-running stability still need verification.
+**Status: experimental personal-use prototype, version 0.2.4 (build 7).** Exact 24-bit FLAC transport has been checked in the Android emulator and on a physical S25 Ultra. Live S25 playback needed reserve increases from 250 to 500, then 750 ms, while retaining FLAC. Acoustic synchronization, elimination of popping, and long-running stability still need verification.
 
 [Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.4) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
 
@@ -175,7 +175,7 @@ UNISONO_TEST_QUALITY=flac UNISONO_TEST_RESERVE=250 UNISONO_TEST_NO_FLAC=1 bash s
 
 The first command compares 49,152 synthetic stereo frames bit for bit through the Swift FLAC encoder, encrypted wire, and native Android decoder. Its source includes silence, signed 24-bit boundaries, channel differences, pseudorandom samples, and least-significant bits; it also checks metadata, packet/timestamp continuity, and malformed-input rejection before the normal background/mixing checks. The second verifies larger-reserve recovery while retaining FLAC. The third makes the test server decline FLAC and checks PCM fallback during normal playback. These scripts target only the emulator; their test classes are excluded from release APKs.
 
-A local-only physical-device probe is included in `tests/DeviceTest.java` and test APKs. It uses the app’s saved pairing link, starts a real session, and reports connection/timing counters without audio contents or pairing credentials. It is never included in release APKs.
+A local-only physical-device probe is included in `tests/DeviceTest.java` and test APKs. It uses the app’s saved pairing link, starts a real session, and reports connection/timing counters without audio contents or pairing credentials. Its optional `flacRoundTrip` instrumentation argument runs the synthetic exact-sample check against a test server forwarded with `adb reverse`, preserving saved pairing settings. Test instrumentation is never included in release APKs.
 
 Mac appearance regression captures exercise a real popover in light and dark host windows:
 
@@ -193,7 +193,15 @@ For v0.2.4, the Mac build and `scripts/test.sh` passed. Native FLAC checks prese
 
 Android 15 emulator tests compared all 49,152 synthetic stereo frames bit for bit, including the least-significant bits, through the encrypted FLAC stream and native Android float output. FLAC playback negotiated a 250 ms reserve and passed background playback, mixing in both start orders, normal-mode focus loss, and explicit stop. An injected 850 ms stall recovered with FLAC retained and a 500 ms reserve. A server without FLAC support correctly selected PCM; PCM fallback and AAC both passed the background/mixing/focus/stop checks, and native AAC round-trip checks passed at both bitrate targets.
 
-The production Mac app captured and streamed 382,976 FLAC frames over approximately eight seconds at 48 kHz with a 250 ms reserve, without a sequence error or capture overflow. No captured audio was saved. Both release builds passed, and the Mac settings preview retained readable light text. The S25 was unavailable over USB during this release's tests, so physical FLAC playback remains unverified. The following v0.2.3 results are historical AAC/PCM evidence and do not establish physical FLAC support.
+The production Mac app captured and streamed 382,976 FLAC frames over approximately eight seconds at 48 kHz with a 250 ms reserve, without a sequence error or capture overflow. No captured audio was saved. Both release builds passed, and the Mac settings preview retained readable light text.
+
+Additional verification after the initial v0.2.4 release used the physical S25 Ultra on Android 16. Its native FLAC decoder passed the exact 24-bit comparison of 49,152 synthetic stereo frames through an `adb reverse` connection to the test server. This verifies the phone's decoding path independently of Wi-Fi and acoustic output.
+
+With the normal v0.2.4 builds installed on both devices, an initial window collected 30 live service-state samples over 31.67 seconds. The first caught recovery at a 250 ms reserve after the app reported late audio; the remaining 29 reported connected FLAC at 500 ms. The output buffer was 360 ms, output underruns were zero within that window, and the final timestamp phase estimate was about +325 ms.
+
+About 88 seconds into the 500 ms session, the app reported late audio and one output underrun, then recovered again at 750 ms while retaining FLAC. Six subsequent readings showed a 750 ms reserve, 360 ms output buffer, and phase estimates of +185 to +212 ms. Their zero underrun counters belonged to the new session, not the entire test. Reserve plus phase gave an approximate 935–962 ms capture-to-AudioTimestamp software estimate at that point. These observations do not identify the cause of late audio or establish acoustic latency, exact synchronization, absence of audible pops, or long-term stability.
+
+The following v0.2.3 results are historical AAC/PCM evidence.
 
 For v0.2.3, the custom-reserve/offset unit checks and protocol suite passed. Android 15 emulator tests verified an initial AAC reserve of 250 ms, native AAC round-trip checks, background playback, mixing in both start orders, and normal-mode focus loss. An injected 850 ms stall recovered to AAC at 160 kbps with a 500 ms reserve and a 100 ms output buffer. The Mac settings preview also confirmed the 250 ms field and readable light text.
 
