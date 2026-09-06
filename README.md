@@ -1,12 +1,16 @@
 # Unísono
 
+<img src="design/icon/Unisono-1024.png" width="96" alt="Unísono icon: a mint U and sound waves on charcoal">
+
 Stream your Mac's system audio to Android over your local network, and listen on both devices at once.
 
 Unísono is a native macOS menu-bar app with a companion Android receiver. It offers adaptive AAC streaming and a lossless PCM mode, encrypts the connection, and uses larger playback reserves to prioritize continuity and synchronization.
 
-**Status: experimental personal-use prototype, version 0.2.1.** macOS capture, Android emulator playback, and a short physical S25 Ultra connection test have been completed. Acoustic synchronization, elimination of popping, and long-running stability still need verification.
+**Status: experimental personal-use prototype, version 0.2.2.** macOS capture, Android emulator playback, and a short physical S25 Ultra connection test have been completed. Acoustic synchronization, elimination of popping, and long-running stability still need verification.
 
-[Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.1) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
+[Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.2) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
+
+Version 0.2.2 adds the approved mint U and sound-wave icon: a Mac app icon and native menu-bar template, plus Android adaptive, themed, and notification icons. Audio behavior remains as in 0.2.1.
 
 <img src="design/mac-preview.png" width="360" alt="Unísono's dark macOS panel with light text, green controls, phone volume and a stop button">
 
@@ -36,7 +40,7 @@ The currently tested environments are a Mac mini M4 running macOS 26.6.1 and an 
 
 ## Try it
 
-1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.1).
+1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.2).
 2. Extract and open the Mac app. Install the APK on Android using your device's normal sideloading flow.
 3. Open Unísono's menu-bar icon, then the gear. Scan its QR with the phone camera, or copy the entire connection link into the Android app.
 4. Tap **Conectar** on Android and grant the Mac's audio-capture permission when prompted. Play audio on the Mac. Reconnect once if the first permission prompt interrupted pairing.
@@ -58,7 +62,7 @@ Background playback, both music-app start orders, and normal-mode focus loss are
 
 Version 0.2.1 removes the automatic restart triggered solely by a large `AudioTimestamp` offset. On a physical S25 Ultra running Android 16, v0.2.0 restarted three times in 20 seconds despite zero output underruns. Fixed device/route latency is now diagnostic information, and bounded timing corrections continue without disconnecting for phase error alone. With the patch, the same physical phone remained connected for 60/60 observed seconds with zero disconnect transitions and zero reported underruns. This short test does not establish long-term stability or acoustic alignment.
 
-The Mac binary is unchanged from v0.2.0 and remains compatible; this fix only requires updating Android.
+For the v0.2.1 release, the Mac binary was unchanged from v0.2.0; that connection fix only required updating Android.
 
 The Android service exposes bounded state via `adb shell dumpsys activity service app.unisono/.AudioService` without pairing keys or audio contents. Failed playback now reports its underlying reason instead of masking it as `Socket closed`.
 
@@ -110,6 +114,15 @@ bash scripts/build-android.sh
 ```
 
 Output: `dist/Unisono-Android.apk`. Android Studio and Gradle are not required. The script uses `javac`, AAPT2, D8, zipalign and apksigner. Keep `build/development.p12` private if you want subsequent local builds to update the same installed APK. Build scripts currently target a macOS development host.
+
+### Icon assets
+
+Exported PNG and ICNS assets are committed. To regenerate them on macOS using only native Mac dependencies:
+
+```sh
+swift scripts/export-icons.swift
+iconutil -c icns build/icons/Unisono.iconset -o mac/Resources/Unisono.icns
+```
 
 ### Tests
 

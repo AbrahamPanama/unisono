@@ -50,7 +50,7 @@ public class AudioService extends Service {
     private Notification notification(String text) {
         PendingIntent open=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
         Intent stop=new Intent(this,AudioService.class).setAction("STOP"); PendingIntent end=PendingIntent.getService(this,1,stop,PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
-        return new Notification.Builder(this,"audio").setContentTitle("Unísono").setContentText(text).setSmallIcon(android.R.drawable.ic_media_play).setOngoing(true).setContentIntent(open).addAction(new Notification.Action.Builder(null,"Desconectar",end).build()).build();
+        return new Notification.Builder(this,"audio").setContentTitle("Unísono").setContentText(text).setSmallIcon(R.drawable.ic_notification).setOngoing(true).setContentIntent(open).addAction(new Notification.Action.Builder(null,"Desconectar",end).build()).build();
     }
     @Override public int onStartCommand(Intent intent,int flags,int startId) {
         if(intent==null||"STOP".equals(intent.getAction())) { stopSelf(); return START_NOT_STICKY; }

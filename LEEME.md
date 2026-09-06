@@ -1,10 +1,16 @@
-# Unísono 0.2.1 · Versión de prueba personal
+# Unísono 0.2.2 · Versión de prueba personal
+
+<img src="design/icon/Unisono-1024.png" width="96" alt="Icono de Unísono: una U y ondas de sonido en verde menta sobre fondo carbón">
 
 Audio de tu Mac a Android por la red local, con reproducción simultánea y transmisión AAC o PCM cifrada. App nativa de barra de menú para Apple Silicon; receptor nativo Android 8 o posterior. Preparada para probar con Mac mini M4 y Galaxy S25 Ultra.
 
+[Descargar la versión de prueba 0.2.2](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.2)
+
+La versión 0.2.2 incorpora el icono aprobado de U y ondas en verde menta: icono de app y plantilla nativa para la barra de menú de Mac, además de iconos adaptativo, temático y de notificación en Android. El comportamiento de audio sigue siendo el de 0.2.1.
+
 ## Instalar y conectar
 
-1. Abre `dist/Unisono.app` en la Mac. También puedes arrastrarla a Aplicaciones. Aparece como un icono de onda en la barra superior; no aparece en el Dock.
+1. Abre `dist/Unisono.app` en la Mac. También puedes arrastrarla a Aplicaciones. Aparece como una U con ondas en la barra superior; no aparece en el Dock.
 2. Copia `dist/Unisono-Android.apk` al S25 Ultra y ábrelo allí. Autoriza la instalación desde esa fuente cuando Android lo solicite. Es una compilación personal, firmada con una clave de desarrollo; no está publicada en Play Store.
 3. Conecta ambos equipos a la misma red local. Evita una red de invitados que aísle los dispositivos.
 4. En el icono de Unísono de la Mac, abre el engranaje o pulsa **Conectar celular**. Escanea el QR con la cámara del S25 y abre el enlace en Unísono. Si la cámara no abre enlaces personalizados, pega el enlace completo en el campo de Android.
@@ -28,7 +34,7 @@ El QR y el enlace contienen una clave privada de escucha. **Revocar clave y crea
 
 ## Corrección de desconexiones en 0.2.1
 
-Se reprodujeron tres desconexiones en 20 segundos en el S25 Ultra físico con Android 16, sin cortes del búfer de salida. La versión anterior reiniciaba por un desfase de tiempo grande, aunque la reproducción estuviera funcionando. Ahora ese desfase se informa y se corrige gradualmente; por sí solo no provoca una reconexión. Con el cambio, el mismo teléfono permaneció conectado durante 60 de 60 segundos observados, sin desconexiones ni cortes de búfer reportados. La sincronización acústica y las sesiones largas todavía deben comprobarse por separado. Esta corrección solo requiere actualizar Android; la app Mac 0.2.0 sigue siendo compatible.
+Se reprodujeron tres desconexiones en 20 segundos en el S25 Ultra físico con Android 16, sin cortes del búfer de salida. La versión anterior reiniciaba por un desfase de tiempo grande, aunque la reproducción estuviera funcionando. Ahora ese desfase se informa y se corrige gradualmente; por sí solo no provoca una reconexión. Con el cambio, el mismo teléfono permaneció conectado durante 60 de 60 segundos observados, sin desconexiones ni cortes de búfer reportados. La sincronización acústica y las sesiones largas todavía deben comprobarse por separado. En la publicación 0.2.1, esta corrección solo requirió actualizar Android; el binario Mac se mantuvo en 0.2.0.
 
 ## Calidad adaptable
 
@@ -82,8 +88,15 @@ Para Mac: `bash scripts/build-mac.sh`. Requiere las Command Line Tools de Apple 
 
 Para Android: define `JAVA_HOME` con JDK 17 y `ANDROID_HOME` con un SDK que contenga `platforms;android-35` y `build-tools;35.0.0`, y ejecuta `bash scripts/build-android.sh`. No requiere Android Studio ni Gradle. Conserva `build/development.p12` para que las siguientes compilaciones puedan actualizar la instalación personal existente.
 
+Los iconos PNG e ICNS exportados están incluidos en el repositorio. Para regenerarlos en macOS, solo con dependencias nativas de Mac:
+
+```sh
+swift scripts/export-icons.swift
+iconutil -c icns build/icons/Unisono.iconset -o mac/Resources/Unisono.icns
+```
+
 Para las pruebas de protocolo: detén Unísono para liberar el puerto 45871, define `JAVA_HOME` y ejecuta `bash scripts/test.sh`.
 
 Para las pruebas de reproducción, con un emulador Android 15 iniciado, ejecuta `bash scripts/test-android.sh`. Instala las apps de prueba únicamente en el emulador. `UNISONO_JITTER=1 bash scripts/test-android.sh` comprueba la recuperación AAC; añade `UNISONO_TEST_QUALITY=lossless` para comprobar PCM.
 
-Configura las rutas de Java y del SDK según tu entorno. La app de Mac está firmada ad hoc y no está notarizada para distribución pública. Los instaladores se encuentran en la sección Releases del repositorio.
+Configura las rutas de Java y del SDK según tu entorno. La app de Mac está firmada ad hoc y no está notarizada para distribución pública. Los instaladores se encuentran en la [publicación 0.2.2](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.2).

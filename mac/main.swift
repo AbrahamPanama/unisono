@@ -53,7 +53,9 @@ final class App:NSObject,NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory); NSApp.appearance=NSAppearance(named:CommandLine.arguments.contains("--light-host") ? .aqua : .darkAqua)
         if let saved=UserDefaults.standard.string(forKey:"pairKey"),let d=Data(hex:saved) { secret=d } else { secret=randomBytes(16); UserDefaults.standard.set(secret.hex,forKey:"pairKey") }
         item=NSStatusBar.system.statusItem(withLength:NSStatusItem.squareLength)
-        item.button?.image=NSImage(systemSymbolName:"waveform",accessibilityDescription:"Unísono"); item.button?.target=self; item.button?.action=#selector(toggle)
+        let menuIcon=NSImage(named:"MenuBarTemplate") ?? NSImage(systemSymbolName:"waveform",accessibilityDescription:"Unísono")
+        menuIcon?.size=NSSize(width:20,height:18); menuIcon?.isTemplate=true
+        item.button?.image=menuIcon; item.button?.setAccessibilityLabel("Unísono"); item.button?.target=self; item.button?.action=#selector(toggle)
         item.button?.toolTip="Unísono — Audio compartido"
         pop.appearance=NSAppearance(named:.darkAqua); pop.behavior = .transient; pop.contentSize=NSSize(width:360,height:558)
         let vc=NSViewController(); vc.view=makePanel(); pop.contentViewController=vc
