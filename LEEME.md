@@ -1,4 +1,4 @@
-# Unísono 0.2.0 · Versión de prueba personal
+# Unísono 0.2.1 · Versión de prueba personal
 
 Audio de tu Mac a Android por la red local, con reproducción simultánea y transmisión AAC o PCM cifrada. App nativa de barra de menú para Apple Silicon; receptor nativo Android 8 o posterior. Preparada para probar con Mac mini M4 y Galaxy S25 Ultra.
 
@@ -26,6 +26,10 @@ El QR y el enlace contienen una clave privada de escucha. **Revocar clave y crea
 - **Mezclar con otras apps**, activado inicialmente, permite escuchar Unísono junto a Spotify u otro reproductor. Desconecta para cambiarlo. Al desactivarlo, Unísono solicita el foco de audio y se detiene cuando otra app lo reclama.
 - Si Android indica modo de llamada, timbre o comunicación, Unísono detiene la sesión; vuelve a conectar después. Las apps de llamadas que no informen ese modo pueden no detectarse. La mezcla con Spotify en el S25 físico todavía requiere prueba.
 
+## Corrección de desconexiones en 0.2.1
+
+Se reprodujeron tres desconexiones en 20 segundos en el S25 Ultra físico con Android 16, sin cortes del búfer de salida. La versión anterior reiniciaba por un desfase de tiempo grande, aunque la reproducción estuviera funcionando. Ahora ese desfase se informa y se corrige gradualmente; por sí solo no provoca una reconexión. Con el cambio, el mismo teléfono permaneció conectado durante 60 de 60 segundos observados, sin desconexiones ni cortes de búfer reportados. La sincronización acústica y las sesiones largas todavía deben comprobarse por separado. Esta corrección solo requiere actualizar Android; la app Mac 0.2.0 sigue siendo compatible.
+
 ## Calidad adaptable
 
 En Android, desconecta para elegir el modo:
@@ -36,7 +40,7 @@ En Android, desconecta para elegir el modo:
 
 **AAC tiene pérdida.** El modo elegido se guarda, y los indicadores muestran el formato y la reserva realmente usados. Actualiza ambas apps para disponer de AAC y la reserva compartida adaptable. Si AAC no puede inicializarse, se intenta PCM y se indica en pantalla.
 
-Android comienza con unos 100 ms de audio preparados, agrupa los paquetes PCM pequeños, aumenta su búfer de salida después de cortes, suaviza el volumen y realiza correcciones de reloj más lentas. Tras un fallo, cortes repetidos o un desfase grande persistente, reconecta con 250 ms adicionales de reserva, hasta 1000 ms. La recuperación produce una pausa breve; no se promete un cambio de códec sin interrupción. La Mac y el celular reinician juntos con esa reserva. Cada inicio manual restablece el perfil seleccionado.
+Android comienza con unos 100 ms de audio preparados, agrupa los paquetes PCM pequeños, aumenta su búfer de salida después de cortes, suaviza el volumen y realiza correcciones de reloj más lentas. Tras un fallo o cortes repetidos, reconecta con 250 ms adicionales de reserva, hasta 1000 ms. La recuperación produce una pausa breve; no se promete un cambio de códec sin interrupción. La Mac y el celular reinician juntos con esa reserva. Cada inicio manual restablece el perfil seleccionado.
 
 Se verificó la recuperación tras una interrupción artificial de 850 ms, tanto con AAC como con PCM. Todavía debe comprobarse si estos cambios eliminan los chasquidos del S25 físico. Una señal Wi-Fi fuerte no descarta problemas de programación, búfer, salida de audio o saturación del audio original.
 
@@ -60,7 +64,7 @@ Ambos extremos comparten marcas de tiempo mediante un intercambio de reloj. La M
 - Captura real de la Mac codificada a AAC durante unos ocho segundos, sin guardar audio.
 - Revisión visual de vistas nativas Mac y pantallas renderizadas de Android. Capturas del popover real idénticas con apariencia anfitriona clara y oscura. Texto claro sobre fondo oscuro; el texto oscuro está reservado al botón verde claro.
 
-**Pendiente:** instalación y prueba en el S25 Ultra físico, medición acústica de sincronización/latencia, pruebas largas y comprobación con tus audífonos o altavoces. El emulador no representa el rendimiento del S25 ni de tu Wi-Fi. Esta es una primera versión funcional para pruebas, no una versión comercial certificada.
+**Pendiente:** pruebas más largas y acústicas en el S25 Ultra físico, medición acústica de sincronización/latencia, pruebas largas y comprobación con tus audífonos o altavoces. El emulador no representa el rendimiento del S25 ni de tu Wi-Fi. Esta es una primera versión funcional para pruebas, no una versión comercial certificada.
 
 ## Si algo falla
 

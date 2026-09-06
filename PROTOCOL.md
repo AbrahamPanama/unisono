@@ -36,6 +36,8 @@ The Mac selects the maximum of its minimum reserve and the receiver's bounded re
 
 Clock exchange: take eight RTT samples, use the shortest, estimate `localMinusServer = clientSend + RTT/2 - serverTime`. Source timestamps refer to the first captured frame of each packet. Local playout target = source timestamp + configured reservation; manual Mac trim affects only the Mac. Android computes target in its monotonic clock domain, starts AudioTrack near it, then estimates phase error through AudioTimestamp. Playback speed correction is filtered, bounded to ±0.2%, rate-limited to 200 ppm per two seconds, and has a 3 ms deadband; this is deliberately not advertised as bit-perfect output.
 
-When congestion, capture-ring overflow, stale playback, missed heartbeat or route changes are detected, terminate/restart the session instead of silently dropping arbitrary source samples and continuing to claim uninterrupted lossless transport. Reconnection can introduce silence/discontinuities; reliable transport cannot guarantee uninterrupted audio on an unreliable network.
+A large absolute AudioTimestamp phase offset alone must not trigger reconnection: device and route latency can produce this with healthy playback.
+
+When congestion, capture-ring overflow, stale queued audio, missed heartbeat or route changes are detected, terminate/restart the session instead of silently dropping arbitrary source samples and continuing to claim uninterrupted lossless transport. Reconnection can introduce silence/discontinuities; reliable transport cannot guarantee uninterrupted audio on an unreliable network.
 
 This is a personal prototype protocol; it has not had an independent cryptographic/security audit. Pair keys are private local application settings, not cloud credentials. Do not publish pairing URLs in screenshots or public documents.

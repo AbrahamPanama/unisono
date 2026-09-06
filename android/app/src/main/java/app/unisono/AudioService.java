@@ -76,7 +76,7 @@ public class AudioService extends Service {
         while(running && retries<3) {
             Thread audio=null; AacDecoder decoder=null;
             try {
-                status=retries==0 ? "Conectando…" : "Reconectando…"; wire=new Wire(link);
+                playbackFailure=null; status=retries==0 ? "Conectando…" : "Reconectando…"; wire=new Wire(link);
                 if(!running) break;
                 long best=Long.MAX_VALUE;
                 for(int i=0;i<8;i++) { long t0=System.nanoTime(); wire.send(3,Wire.longBytes(t0)); byte[] b=wire.read(); long t1=System.nanoTime(); if(b.length!=17||b[0]!=4) throw new IOException("Sincronización de reloj inválida"); ByteBuffer p=ByteBuffer.wrap(b); p.get(); long echo=p.getLong(),server=p.getLong(); if(echo!=t0) throw new IOException("Respuesta de reloj inválida"); if(t1-t0<best) { best=t1-t0; localMinusServer=t0+(t1-t0)/2-server; } }
@@ -129,7 +129,12 @@ public class AudioService extends Service {
                     }
                 }
                 if(playbackFailure!=null) throw new IOException(playbackFailure.getMessage(),playbackFailure);
-            } catch(Exception e) { if(running) { status="Conexión interrumpida: "+(e.getMessage()==null ? e.getClass().getSimpleName() : e.getMessage()); retries++;
+            } catch(Exception e) { if(running) {
+                    Throwable cause=playbackFailure!=null ? playbackFailure : e;
+                    String reason=(cause.getMessage()==null ? cause.getClass().getSimpleName() : cause.getMessage()).replaceAll("unisono://\\S+","[enlace privado]");
+                    status="Conexión interrumpida: "+reason;
+                    android.util.Log.w("UnisonoAudio","Recovery: "+reason+"; underruns="+underruns+"; syncMs="+syncMs);
+                    retries++;
                     reserveMs=PlaybackTuning.nextReserve(Math.max(reserveMs,delayMs));
                     if(!"lossless".equals(quality)) bitrate=160000;
                 } }
@@ -178,7 +183,7 @@ public class AudioService extends Service {
             if(System.nanoTime()>origin+50_000_000L) throw new IOException("La reserva inicial fue insuficiente");
             while(running&&sessionActive&&System.nanoTime()<start) { LockSupport.parkNanos(Math.min(2_000_000L,start-System.nanoTime())); if(Thread.currentThread().isInterrupted()) throw new InterruptedException(); }
             if(!running||!sessionActive) return;
-            t.play(); write(t,pending.samples,offset); long lastCorrection=0; int routedId=-1,unstableClock=0;
+            t.play(); write(t,pending.samples,offset); long lastCorrection=0; int routedId=-1;
             while(running&&sessionActive) {
                 Chunk c=queue.poll(2,TimeUnit.SECONDS); if(c==null) throw new IOException("La red dejó de entregar audio");
                 if(System.nanoTime()>c.pts+localMinusServer+delayMs*1_000_000L+200_000_000L) throw new IOException("La red superó la reserva; aumentando estabilidad");
@@ -194,8 +199,9 @@ public class AudioService extends Service {
                     AudioTimestamp ts=new AudioTimestamp();
                     if(t.getTimestamp(ts)) {
                         double desired=origin+ts.framePosition*(1e9/rate); syncMs=(ts.nanoTime-desired)/1e6;
-                        unstableClock=Math.abs(syncMs)>120 ? unstableClock+1 : 0;
-                        if(unstableClock>=4) throw new IOException("El audio perdió sincronía; aumentando la reserva");
+                        // A fixed device/route delay is not evidence of a broken stream.
+                        // Samsung can report hundreds of ms while playback has zero underruns.
+                        // Keep timing diagnostic and slew correction; never reconnect for phase alone.
                         float next=tuning.correction(syncMs,now);
                         if(next!=playbackSpeed) {
                             try { t.setPlaybackParams(new PlaybackParams().allowDefaults().setPitch(1).setSpeed(next)); playbackSpeed=next; } catch(IllegalArgumentException ignored) {}
@@ -220,6 +226,11 @@ public class AudioService extends Service {
         Wire w=wire; if(w!=null) w.close(); if(worker!=null) worker.interrupt();
         if(wake!=null&&wake.isHeld()) wake.release(); if(wifi!=null&&wifi.isHeld()) wifi.release(); if(focusHeld&&manager!=null&&focus!=null) manager.abandonAudioFocusRequest(focus); focusHeld=false;
         instance=null; stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy();
+    }
+    @Override protected void dump(FileDescriptor fd,PrintWriter out,String[] args) {
+        out.println("UnisonoAudio connected="+connected+" connecting="+connecting+" running="+running);
+        out.println("codec="+wireFormat+" reserveMs="+delayMs+" bufferMs="+outputBufferMs+" underruns="+underruns+" syncMs="+syncMs+" speed="+playbackSpeed);
+        out.println("status="+status.replaceAll("unisono://\\S+","[enlace privado]"));
     }
     @Override public IBinder onBind(Intent i) { return null; }
 }

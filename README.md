@@ -4,9 +4,9 @@ Stream your Mac's system audio to Android over your local network, and listen on
 
 Unísono is a native macOS menu-bar app with a companion Android receiver. It offers adaptive AAC streaming and a lossless PCM mode, encrypts the connection, and uses larger playback reserves to prioritize continuity and synchronization.
 
-**Status: experimental personal-use prototype, version 0.2.0.** macOS capture and Android emulator playback have been tested. Physical Galaxy S25 Ultra playback, acoustic synchronization, and long-running stability still need verification.
+**Status: experimental personal-use prototype, version 0.2.1.** macOS capture, Android emulator playback, and a short physical S25 Ultra connection test have been completed. Acoustic synchronization, elimination of popping, and long-running stability still need verification.
 
-[Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.0) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
+[Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.1) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
 
 <img src="design/mac-preview.png" width="360" alt="Unísono's dark macOS panel with light text, green controls, phone volume and a stop button">
 
@@ -36,7 +36,7 @@ The currently tested environments are a Mac mini M4 running macOS 26.6.1 and an 
 
 ## Try it
 
-1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.0).
+1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.1).
 2. Extract and open the Mac app. Install the APK on Android using your device's normal sideloading flow.
 3. Open Unísono's menu-bar icon, then the gear. Scan its QR with the phone camera, or copy the entire connection link into the Android app.
 4. Tap **Conectar** on Android and grant the Mac's audio-capture permission when prompted. Play audio on the Mac. Reconnect once if the first permission prompt interrupted pairing.
@@ -54,6 +54,14 @@ Mixing mode deliberately does not request audio focus; it keeps normal media/mus
 
 Background playback, both music-app start orders, and normal-mode focus loss are tested on an Android 15 emulator with an independent media player. The mixer reports both tracks active and unmuted in mixing mode. This does not verify acoustic output or guarantee Spotify/Samsung firmware behavior on the physical S25 Ultra. Device battery restrictions can also interrupt long background sessions.
 
+## Connection stability on Galaxy S25 Ultra
+
+Version 0.2.1 removes the automatic restart triggered solely by a large `AudioTimestamp` offset. On a physical S25 Ultra running Android 16, v0.2.0 restarted three times in 20 seconds despite zero output underruns. Fixed device/route latency is now diagnostic information, and bounded timing corrections continue without disconnecting for phase error alone. With the patch, the same physical phone remained connected for 60/60 observed seconds with zero disconnect transitions and zero reported underruns. This short test does not establish long-term stability or acoustic alignment.
+
+The Mac binary is unchanged from v0.2.0 and remains compatible; this fix only requires updating Android.
+
+The Android service exposes bounded state via `adb shell dumpsys activity service app.unisono/.AudioService` without pairing keys or audio contents. Failed playback now reports its underlying reason instead of masking it as `Socket closed`.
+
 ## Quality modes and popping
 
 | Android mode | Audio transport | Initial reserve |
@@ -66,7 +74,7 @@ Background playback, both music-app start orders, and normal-mode focus loss are
 
 Android now fills approximately 100 ms of output audio before playback, coalesces small PCM packets, increases its output buffer after underruns toward 250 ms (subject to device limits), smooths startup/volume changes over 10 ms, and filters clock corrections instead of adjusting aggressively every half-second. Corrections change at most every two seconds, with a 3 ms deadband and a 200 ppm step limit.
 
-After a failed session, repeated underruns, or persistent large timing error, the receiver reconnects with a reserve increased by 250 ms, capped at 1000 ms. The Mac uses the larger of its configured minimum and the receiver's request, so both restart on the same timeline. This introduces a brief pause; it is not seamless bitrate switching. Automatic reductions in quality only occur within an AAC mode. There are at most three connection attempts per start, and settings reset to the selected profile on a fresh manual start.
+After a failed session or repeated underruns, the receiver reconnects with a reserve increased by 250 ms, capped at 1000 ms. The Mac uses the larger of its configured minimum and the receiver's request, so both restart on the same timeline. This introduces a brief pause; it is not seamless bitrate switching. Automatic reductions in quality only occur within an AAC mode. There are at most three connection attempts per start, and settings reset to the selected profile on a fresh manual start.
 
 Strong Wi-Fi signal does not establish the cause of a pop. Small buffers, scheduling stalls, clock correction, source clipping, or the output device can also contribute. These changes address several plausible software causes; eliminating the reported pops on the physical S25 Ultra is still unverified.
 
@@ -117,6 +125,8 @@ With an Android 15 emulator running and `ANDROID_HOME` configured, run `bash scr
 
 Use `UNISONO_JITTER=1 bash scripts/test-android.sh` to inject an 850 ms network stall and verify AAC recovery at a larger reserve/lower bitrate. Add `UNISONO_TEST_QUALITY=lossless` to verify that recovery preserves PCM. `scripts/test.sh` also checks adaptive-buffer bounds, clock-correction limits, and gain ramps in pure Java.
 
+A local-only physical-device probe is included in `tests/DeviceTest.java` and test APKs. It uses the app’s saved pairing link, starts a real session, and reports connection/timing counters without audio contents or pairing credentials. It is never included in release APKs.
+
 Mac appearance regression captures exercise a real popover in light and dark host windows:
 
 ```sh
@@ -138,7 +148,7 @@ Preview mode uses synthetic connection state and does not start the network list
 - Actual Mac capture encoded and transmitted approximately eight seconds of AAC without capture overflow; no audio was saved.
 - Native UI captures were reviewed for layout and light-on-dark text contrast. Real popover captures are identical under light and dark host appearances; settings also use explicit light text.
 
-Still pending: physical S25 Ultra testing, actual Wi-Fi performance, acoustic latency/synchronization measurements, longer sessions, and first-use QR/permission flows on Samsung devices.
+Still pending: longer physical S25 Ultra testing, actual Wi-Fi performance, acoustic latency/synchronization measurements, longer sessions, and first-use QR/permission flows on Samsung devices.
 
 ## Repository layout
 
