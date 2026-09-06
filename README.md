@@ -4,13 +4,15 @@
 
 Stream your Mac's system audio to Android over your local network, and listen on both devices at once.
 
-Unísono is a native macOS menu-bar app with a companion Android receiver. It offers adaptive AAC streaming and a lossless PCM mode, encrypts the connection, and uses larger playback reserves to prioritize continuity and synchronization.
+Unísono is a native macOS menu-bar app with a companion Android receiver. It offers adaptive AAC streaming and a lossless PCM mode, encrypts the connection, and lets you adjust the shared playback reserve to balance delay and continuity.
 
-**Status: experimental personal-use prototype, version 0.2.2.** macOS capture, Android emulator playback, and a short physical S25 Ultra connection test have been completed. Acoustic synchronization, elimination of popping, and long-running stability still need verification.
+**Status: experimental personal-use prototype, version 0.2.3.** A custom 250 ms AAC reserve has been checked in the Android emulator and a short physical S25 Ultra session. Acoustic synchronization, elimination of popping, and long-running stability still need verification.
 
-[Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.2) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
+[Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.3) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
 
-Version 0.2.2 adds the approved mint U and sound-wave icon: a Mac app icon and native menu-bar template, plus Android adaptive, themed, and notification icons. Audio behavior remains as in 0.2.1.
+Version 0.2.3 adds a custom shared reserve of 250–1000 ms in Mac settings, retaining the 500 ms default. Balanced AAC and PCM now honor a 250 ms setting; the stable AAC profile retains a 750 ms minimum. The separate Mac synchronization offset rejects values outside ±100 ms instead of silently clamping them, and Android labels its independent output buffer explicitly.
+
+Version 0.2.2 introduced the approved mint U and sound-wave icon: a Mac app icon and native menu-bar template, plus Android adaptive, themed, and notification icons. That release kept the audio behavior of 0.2.1.
 
 <img src="design/mac-preview.png" width="360" alt="Unísono's dark macOS panel with light text, green controls, phone volume and a stop button">
 
@@ -22,7 +24,7 @@ Version 0.2.2 adds the approved mint U and sound-wave icon: a Mac app icon and n
 - Sends AAC-LC at a 256 or 160 kbps target, or uncompressed stereo Float32 PCM, over encrypted TCP.
 - Authenticates pairing with a random key and encrypts packets with AES-256-GCM.
 - Plays locally on the Mac and remotely on Android, or only on Android.
-- Offers a 500–1000 ms shared playback reserve, adaptive Android output buffering, and a manual Mac timing adjustment.
+- Offers a configurable 250–1000 ms shared playback reserve, adaptive Android output buffering, and a separate manual Mac synchronization offset.
 - Imports a pairing link or QR through the Android camera's link handler.
 - Supports phone-volume control and Android background playback with a foreground-service notification.
 - Offers **Mezclar con otras apps**, enabled by default, to listen alongside another music app.
@@ -40,11 +42,12 @@ The currently tested environments are a Mac mini M4 running macOS 26.6.1 and an 
 
 ## Try it
 
-1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.2).
+1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.3).
 2. Extract and open the Mac app. Install the APK on Android using your device's normal sideloading flow.
 3. Open Unísono's menu-bar icon, then the gear. Scan its QR with the phone camera, or copy the entire connection link into the Android app.
 4. Tap **Conectar** on Android and grant the Mac's audio-capture permission when prompted. Play audio on the Mac. Reconnect once if the first permission prompt interrupted pairing.
 5. Start with **Equilibrado · AAC adaptable** on Android. Choose **Más estable · AAC 160 kbps** for a larger starting reserve or **Sin pérdida · PCM** for lossless transport. Disconnect to change the mode.
+6. To customize the reserve, enter a whole number from **250 to 1000** under **Reserva de audio** in Mac settings, select **Aplicar y reconectar**, then reconnect on Android. The default is 500 ms. The stable AAC profile can raise a smaller Mac setting to its 750 ms minimum.
 
 The apps currently use a Spanish interface. Closing the Mac panel leaves streaming active. **Detener transmisión** ends the session and restores normal Mac playback; **Salir de Unísono** quits the app.
 
@@ -70,15 +73,15 @@ The Android service exposes bounded state via `adb shell dumpsys activity servic
 
 | Android mode | Audio transport | Initial reserve |
 |---|---|---|
-| Equilibrado · AAC adaptable (default) | AAC-LC, 256 kbps target; 160 kbps on recovery | 500 ms |
-| Más estable · AAC 160 kbps | AAC-LC, 160 kbps target | 750 ms |
-| Sin pérdida · PCM | Original Float32 PCM; never automatically switches to AAC | 500 ms |
+| Equilibrado · AAC adaptable (default) | AAC-LC, 256 kbps target; 160 kbps on recovery | 500 ms default; configurable from 250 ms |
+| Más estable · AAC 160 kbps | AAC-LC, 160 kbps target | At least 750 ms; follows a larger Mac setting |
+| Sin pérdida · PCM | Original Float32 PCM; never automatically switches to AAC | 500 ms default; configurable from 250 ms |
 
 **AAC is lossy.** Its lower network usage is a deliberate quality/stability tradeoff. The Android status and Mac panel show the actual codec, bitrate target where applicable, and shared reserve. AAC uses native Mac encoding and Android decoding at 48 kHz, with encoder priming removed before scheduling playback. Unavailable AAC initialization falls back to PCM, which is reported in the status. Legacy receivers request PCM; legacy Mac builds respond with PCM. Update both apps to use all adaptation features.
 
 Android now fills approximately 100 ms of output audio before playback, coalesces small PCM packets, increases its output buffer after underruns toward 250 ms (subject to device limits), smooths startup/volume changes over 10 ms, and filters clock corrections instead of adjusting aggressively every half-second. Corrections change at most every two seconds, with a 3 ms deadband and a 200 ppm step limit.
 
-After a failed session or repeated underruns, the receiver reconnects with a reserve increased by 250 ms, capped at 1000 ms. The Mac uses the larger of its configured minimum and the receiver's request, so both restart on the same timeline. This introduces a brief pause; it is not seamless bitrate switching. Automatic reductions in quality only occur within an AAC mode. There are at most three connection attempts per start, and settings reset to the selected profile on a fresh manual start.
+After a failed session or repeated underruns, the receiver reconnects with 250 ms added to the actual negotiated reserve, capped at 1000 ms: a 250 ms session can recover at 500 ms, then 750 ms. The Mac uses the larger of its configured reserve and the receiver's request, so both restart on the same timeline. Balanced AAC and PCM initially request a 250 ms minimum; stable AAC requests 750 ms. This introduces a brief pause; it is not seamless bitrate switching. Automatic reductions in quality only occur within an AAC mode. There are at most three connection attempts per start, and a fresh manual start resets recovery state before negotiating from the selected profile and saved Mac setting. Older receivers' larger requests remain respected; update both apps to use 250 ms.
 
 Strong Wi-Fi signal does not establish the cause of a pop. Small buffers, scheduling stalls, clock correction, source clipping, or the output device can also contribute. These changes address several plausible software causes; eliminating the reported pops on the physical S25 Ultra is still unverified.
 
@@ -86,7 +89,17 @@ Strong Wi-Fi signal does not establish the cause of a pop. Small buffers, schedu
 
 **PCM lossless transport is not the same as bit-perfect output.** In PCM mode, transmitted samples are preserved, but the source mixer, output mixer, volume changes, device resampling and Android clock correction can alter the rendered audio. Bluetooth may add lossy encoding and additional delay.
 
-At 48 kHz, stereo Float32 PCM uses about 3.07 Mbps before protocol overhead. The configured 500–1000 ms reserve is a buffer setting, **not measured end-to-end latency**.
+At 48 kHz, stereo Float32 PCM uses about 3.07 Mbps before protocol overhead. The configured 250–1000 ms reserve sets the shared playback target, **not measured end-to-end latency**.
+
+Three settings/readouts describe different parts of playback:
+
+| UI label | Meaning |
+|---|---|
+| **Reserva de audio** / **Reserva** | Shared scheduling reserve, entered on the Mac as a whole number from 250 to 1000 ms; default 500 ms. Android can request more for its stable profile or recovery. |
+| **Sincronización de la Mac** | Mac-only offset from −100 to +100 ms. Positive values delay the Mac; negative values advance it. Invalid values are rejected, not silently changed. |
+| **Búfer de salida** | Effective AudioTrack output-buffer capacity reported by Android. It depends on the device and can grow after underruns. It is neither the shared reserve nor a measurement of acoustic latency. |
+
+For example, **Reserva 250 ms · Búfer de salida 200 ms** can be correct: changing the reserve does not force Android's output-buffer capacity to change. The 200 ms readout is not a measurement of current queued audio or an independently measured extra 200 ms to add to the reserve.
 
 Clock exchange, scheduled Mac playback and Android `AudioTimestamp` feedback align playback to a shared timeline. Android makes small playback-speed corrections to compensate for independent clocks. The reported timing error is an estimate against that timeline, not an acoustic measurement between the speakers. Precise synchronization on a physical S25 Ultra remains unverified.
 
@@ -132,11 +145,18 @@ Stop the Mac app first so TCP port 45871 is available. With JDK 17 configured:
 bash scripts/test.sh
 ```
 
-This checks the capture ring and Swift/Java protocol interoperability: exact PCM sample bits, authenticated encryption, clock messages, volume messages, explicit stop, reconnection and rejection of incorrect pairing keys. Fixed `1111…` and `2222…` keys in tests are public fixtures, never production pairing keys.
+This checks custom-reserve parsing and negotiation, Mac offset validation, the capture ring, and Swift/Java protocol interoperability: exact PCM sample bits, authenticated encryption, clock messages, volume messages, explicit stop, reconnection and rejection of incorrect pairing keys. Fixed `1111…` and `2222…` keys in tests are public fixtures, never production pairing keys. The test server and Mac app use the same `LatencySettings` negotiation helper.
 
 With an Android 15 emulator running and `ANDROID_HOME` configured, run `bash scripts/test-android.sh`. It builds the test APK and a separate-UID media-player fixture, validates both native AAC bitrates and priming alignment against a synthetic tone, and verifies advancing background playback, both mixing start orders, unmuted mixer state, normal-mode focus loss, and explicit disconnect. It targets the emulator and a test server at `10.0.2.2:45871`; test APKs stay under `build/` and are excluded from releases.
 
-Use `UNISONO_JITTER=1 bash scripts/test-android.sh` to inject an 850 ms network stall and verify AAC recovery at a larger reserve/lower bitrate. Add `UNISONO_TEST_QUALITY=lossless` to verify that recovery preserves PCM. `scripts/test.sh` also checks adaptive-buffer bounds, clock-correction limits, and gain ramps in pure Java.
+The test server defaults to a 500 ms Mac reserve. With the same Java/SDK environment and emulator configured, test a custom 250 ms reserve with:
+
+```sh
+UNISONO_TEST_RESERVE=250 bash scripts/test-android.sh
+UNISONO_TEST_RESERVE=250 UNISONO_JITTER=1 bash scripts/test-android.sh
+```
+
+The first command asserts the negotiated reserve before checking playback. The second injects an 850 ms network stall and checks recovery at a larger reserve/lower AAC bitrate. Add `UNISONO_TEST_QUALITY=lossless` to verify that recovery preserves PCM, or use `UNISONO_TEST_QUALITY=stable` to check that its 750 ms minimum overrides a 250 ms Mac setting. `scripts/test.sh` also checks adaptive-buffer bounds, profile reserve floors, recovery from 250 ms, clock-correction limits, and gain ramps in pure Java.
 
 A local-only physical-device probe is included in `tests/DeviceTest.java` and test APKs. It uses the app’s saved pairing link, starts a real session, and reports connection/timing counters without audio contents or pairing credentials. It is never included in release APKs.
 
@@ -151,6 +171,12 @@ mkdir -p build/mac
 Preview mode uses synthetic connection state and does not start the network listener.
 
 ## Validation so far
+
+For v0.2.3, the custom-reserve/offset unit checks and protocol suite passed. Android 15 emulator tests verified an initial AAC reserve of 250 ms, native AAC round-trip checks, background playback, mixing in both start orders, and normal-mode focus loss. An injected 850 ms stall recovered to AAC at 160 kbps with a 500 ms reserve and a 100 ms output buffer. The Mac settings preview also confirmed the 250 ms field and readable light text.
+
+With production v0.2.3 installed on both devices, a real Mac-to-S25 Ultra session on Android 16 used AAC at 256 kbps. All 30 service-state samples collected over 32.2 seconds reported connected, a 250 ms reserve, a 200 ms output buffer, and zero output underruns. The final timestamp phase estimate was approximately +201 ms. This verifies the applied reserve during that short observation; it does not establish 250 ms acoustic latency, exact synchronization, or long-term stability.
+
+The following records earlier baseline validation:
 
 - Mac and Android builds compiled and their signatures verified.
 - Swift/Java interoperability: 8,192 stereo frames compared bit for bit.

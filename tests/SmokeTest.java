@@ -12,6 +12,7 @@ public class SmokeTest extends Instrumentation {
     private volatile Boolean fixturePlaying;
     private boolean stability;
     private String selectedQuality;
+    private int expectedReserve;
     private final BroadcastReceiver fixtureState=new BroadcastReceiver() {
         @Override public void onReceive(Context c,Intent i) { fixturePlaying=i.getBooleanExtra("playing",false); }
     };
@@ -31,6 +32,15 @@ public class SmokeTest extends Instrumentation {
         return Integer.toUnsignedLong(track.getPlaybackHeadPosition());
     }
     private void advancing() throws Exception { long before=frames(); Thread.sleep(2200); if(frames()-before<48000) throw new AssertionError("Playback did not advance in background"); }
+    private int reserve() throws Exception {
+        AudioService service=AudioService.instance;
+        if(service==null) return -1;
+        java.lang.reflect.Field field=AudioService.class.getDeclaredField("delayMs"); field.setAccessible(true);
+        return field.getInt(service);
+    }
+    private boolean recovered(int minimumReserve) throws Exception {
+        return AudioService.connected && ("lossless".equals(selectedQuality) ? AudioService.details.startsWith("PCM") : AudioService.details.contains("160 kbps")) && reserve()>=minimumReserve;
+    }
     private void assertMixer() throws Exception {
         String dump;
         try(ParcelFileDescriptor fd=getUiAutomation().executeShellCommand("dumpsys audio"); FileInputStream in=new FileInputStream(fd.getFileDescriptor()); ByteArrayOutputStream out=new ByteArrayOutputStream()) {
@@ -51,7 +61,12 @@ public class SmokeTest extends Instrumentation {
         if(!AudioService.connected) throw new AssertionError("Connection failed: "+AudioService.status);
         Thread.sleep(1000);
     }
-    @Override public void onCreate(Bundle args) { super.onCreate(args); stability="true".equals(args.getString("stability")); selectedQuality=args.getString("quality","balanced"); start(); }
+    @Override public void onCreate(Bundle args) {
+        super.onCreate(args); stability="true".equals(args.getString("stability")); selectedQuality=args.getString("quality","balanced");
+        int macReserve=Integer.parseInt(args.getString("reserve","500"));
+        expectedReserve=Math.max(Math.max(250,Math.min(1000,macReserve)),"stable".equals(selectedQuality) ? 750 : 250);
+        start();
+    }
     private View find(View v,String text) {
         if(v instanceof Button && ((Button)v).getText().toString().equals(text)) return v;
         if(v instanceof ViewGroup) { ViewGroup g=(ViewGroup)v; for(int i=0;i<g.getChildCount();i++) { View hit=find(g.getChildAt(i),text); if(hit!=null) return hit; } } return null;
@@ -70,10 +85,12 @@ public class SmokeTest extends Instrumentation {
             Activity a=startActivitySync(intent); waitForIdleSync(); Thread.sleep(1000); save(a,"android-idle.png");
             runOnMainSync(()-> { View b=find(a.getWindow().getDecorView(),"Conectar"); if(b==null) throw new AssertionError("Connect button missing"); b.performClick(); });
             awaitConnection();
+            if(reserve()!=expectedReserve) throw new AssertionError("Negotiated reserve: expected "+expectedReserve+" ms, got "+reserve()+" ms; "+AudioService.details);
             if(stability) {
+                int recoveryReserve=Math.min(1000,expectedReserve+250);
                 long deadline=System.nanoTime()+25_000_000_000L;
-                while(System.nanoTime()<deadline && !(AudioService.connected && ("lossless".equals(selectedQuality) ? AudioService.details.startsWith("PCM") : AudioService.details.contains("160 kbps")) && (AudioService.details.contains("750 ms")||AudioService.details.contains("1000 ms")))) Thread.sleep(200);
-                if(!AudioService.connected||!("lossless".equals(selectedQuality) ? AudioService.details.startsWith("PCM") : AudioService.details.contains("160 kbps"))||AudioService.details.contains("Reserva 500 ms")) throw new AssertionError("No adaptive recovery: "+AudioService.status+" / "+AudioService.details);
+                while(System.nanoTime()<deadline && !recovered(recoveryReserve)) Thread.sleep(200);
+                if(!recovered(recoveryReserve)) throw new AssertionError("No adaptive recovery to at least "+recoveryReserve+" ms: "+AudioService.status+" / "+AudioService.details);
                 Thread.sleep(2000); advancing();
                 getTargetContext().stopService(new Intent(getTargetContext(),AudioService.class));
                 result.putString("stream","PASS: audio playback recovery from an 850 ms network stall; "+AudioService.details); finish(Activity.RESULT_OK,result);return;

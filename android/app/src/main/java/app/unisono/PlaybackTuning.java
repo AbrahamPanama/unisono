@@ -22,7 +22,10 @@ public final class PlaybackTuning {
         if(Math.abs(next-speed)>=0.00005f) { speed=next; lastChange=now; }
         return speed;
     }
-    public static int nextReserve(int current) { return Math.min(1000,Math.max(500,current)+250); }
+    // The Mac's configured reserve still supplies the normal 500 ms default.
+    // Balanced AAC and PCM permit a smaller explicit Mac setting; stable AAC keeps its floor.
+    public static int initialReserve(String quality) { return "stable".equals(quality) ? 750 : 250; }
+    public static int nextReserve(int current) { return Math.min(1000,Math.max(250,current)+250); }
     public static final class Gain {
         private float current;
         public void apply(float[] samples,float target,int rate) {

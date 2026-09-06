@@ -31,7 +31,7 @@ public class AudioService extends Service {
     private volatile boolean sessionActive;
     private long localMinusServer;
     private int rate,delayMs;
-    private int reserveMs=500,bitrate=256000;
+    private int reserveMs=250,bitrate=256000;
     private String quality="balanced",wireFormat="float32le";
     private volatile int outputBufferMs=100;
     private volatile float playbackSpeed=1;
@@ -65,7 +65,7 @@ public class AudioService extends Service {
         }
         if(communicationActive()) { status="Conecta después de la llamada"; stopSelf(); return START_NOT_STICKY; }
         quality=getSharedPreferences("playback",MODE_PRIVATE).getString("quality","balanced");
-        forcePCM=false; reserveMs="stable".equals(quality) ? 750 : 500; bitrate="stable".equals(quality) ? 160000 : 256000;
+        forcePCM=false; delayMs=0; reserveMs=PlaybackTuning.initialReserve(quality); bitrate="stable".equals(quality) ? 160000 : 256000;
         running=true; connecting=true;
         wake=getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"Unisono:audio"); wake.acquire();
         WifiManager wm=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE); if(wm!=null) { wifi=wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF,"Unisono:wifi"); wifi.acquire(); }
@@ -147,7 +147,7 @@ public class AudioService extends Service {
         if(!queue.offer(chunk,100,TimeUnit.MILLISECONDS)) throw new IOException("La reproducción se atrasó");
     }
     private void updateDetails() {
-        details=("aac-lc".equals(wireFormat) ? "AAC · "+bitrate/1000+" kbps" : "PCM sin pérdida · "+rate+" Hz")+" · Reserva "+delayMs+" ms · Búfer "+outputBufferMs+" ms";
+        details=("aac-lc".equals(wireFormat) ? "AAC · "+bitrate/1000+" kbps" : "PCM sin pérdida · "+rate+" Hz")+" · Reserva "+delayMs+" ms · Búfer de salida "+outputBufferMs+" ms";
     }
     private void playAudio() {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO); AudioTrack t=null;

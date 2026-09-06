@@ -2,6 +2,11 @@ import Foundation
 import CryptoKit
 import Network
 
+let macReserve:Int
+if let position=CommandLine.arguments.firstIndex(of:"--reserve") {
+    guard position+1<CommandLine.arguments.count,let value=Int(CommandLine.arguments[position+1]) else { fatalError("--reserve requires an integer number of milliseconds") }
+    macReserve=value
+} else { macReserve=500 }
 let server=LinkServer(secret:Data(repeating:0x11,count:16))
 var timer:DispatchSourceTimer?
 var index:UInt64=0
@@ -12,9 +17,9 @@ server.onReady={
     index=0;epoch=clockNS()+10_000_000;held=[];holdUntil=0
     let req=(try? JSONSerialization.jsonObject(with:server.captureRequest)) as? [String:Any] ?? [:]
     encoder=(req["codec"] as? String)=="aac-lc" ? try! AACEncoder(sourceRate:48000,bitRate:(req["bitrate"] as? Int)==160000 ? 160000 : 256000) : nil
-    var cfg: [String:Any] = ["rate":48000,"channels":2,"format":"float32le","delayMs":250,"version":1]
+    var cfg: [String:Any] = ["rate":48000,"channels":2,"format":"float32le","version":1]
     if let encoder=encoder { cfg["format"]="aac-lc";cfg["bitrate"]=encoder.bitRate;cfg["primingFrames"]=encoder.primingFrames }
-    cfg["delayMs"]=max(250,min(1000,req["reserveMs"] as? Int ?? 250))
+    cfg["delayMs"]=LatencySettings.negotiate(macMilliseconds:macReserve,receiverMilliseconds:req["reserveMs"] as? Int)
     server.send(1,try! JSONSerialization.data(withJSONObject:cfg))
     let t=DispatchSource.makeTimerSource(queue:.main)
     t.schedule(deadline:.now()+0.01,repeating:.nanoseconds(5_333_333))

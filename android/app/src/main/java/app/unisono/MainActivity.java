@@ -61,7 +61,7 @@ public class MainActivity extends Activity {
             public void onItemSelected(AdapterView<?> a,View v,int p,long id) { getSharedPreferences("playback",MODE_PRIVATE).edit().putString("quality",qualityIds[p]).apply(); }
         });
         root.addView(quality,new LinearLayout.LayoutParams(-1,dp(48)));
-        root.addView(text("AAC usa compresión con pérdida. La reserva aumenta si hay cortes. Cambia el modo al desconectar.",13,gray,false));
+        root.addView(text("Configura la reserva en la Mac: desde 250 ms en Equilibrado o PCM; Más estable pide 750 ms. Puede aumentar tras cortes. AAC tiene pérdida.",13,gray,false));
         gap(root,12);
         mix=new CheckBox(this); mix.setText("Mezclar con otras apps"); mix.setTextColor(Color.WHITE); mix.setTextSize(15); mix.setButtonTintList(android.content.res.ColorStateList.valueOf(green));
         mix.setChecked(getSharedPreferences("playback",MODE_PRIVATE).getBoolean("mixWithOtherApps",true));
@@ -86,7 +86,7 @@ public class MainActivity extends Activity {
         mix.setEnabled(!active&&!busy); mix.setAlpha(active||busy ? 0.65f : 1f);
         state.setText(AudioService.status); hero.setText(active ? "Mac +\n"+(Build.MODEL.startsWith("SM-S938") ? "Galaxy S25 Ultra" : Build.MODEL) : "Escucha tu Mac.\nTambién aquí."); audioControls.setVisibility(active ? View.VISIBLE : View.GONE);
         pairing.setVisibility(active ? View.GONE : View.VISIBLE); connect.setText(active ? "Desconectar" : busy ? "Cancelar conexión" : "Conectar");
-        volume.setEnabled(active); if(!volume.isPressed()) volume.setProgress((int)(AudioService.volume*100)); detail.setText(active||busy ? AudioService.details : "Reserva adaptable · 500–1000 ms"); route.setText(AudioService.route);
+        volume.setEnabled(active); if(!volume.isPressed()) volume.setProgress((int)(AudioService.volume*100)); detail.setText(active||busy ? AudioService.details : "Reserva configurable en la Mac · 250–1000 ms"); route.setText(AudioService.route);
     }
     @Override public void onResume() { super.onResume(); handler.post(refresh); }
     @Override public void onPause() { handler.removeCallbacks(refresh); super.onPause(); }
