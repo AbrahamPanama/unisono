@@ -6,11 +6,13 @@ Stream your Mac's system audio to Android over your local network, and listen on
 
 Unísono is a native macOS menu-bar app with a companion Android receiver. It offers adaptive AAC, FLAC compression of 24-bit PCM, and uncompressed Float32 PCM streaming. It encrypts the connection and lets you adjust the shared playback reserve to balance delay and continuity.
 
-**Status: experimental personal-use prototype, version 0.2.4 (build 7).** Exact 24-bit FLAC transport has been checked in the Android emulator and on a physical S25 Ultra. Live S25 playback needed reserve increases from 250 to 500, then 750 ms, while retaining FLAC. Acoustic synchronization, elimination of popping, and long-running stability still need verification.
+**Status: experimental personal-use prototype.** Version 0.3.0 adds latency debugging on Mac and Android. The validation section separates controls and telemetry checks from acoustic synchronization and long-running stability.
 
-[Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.4) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
+[Download a prerelease](https://github.com/AbrahamPanama/unisono/releases) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
 
-Version 0.2.4 adds **Sin pérdida · FLAC 24 bits**, using native Mac encoding and Android decoding. Captured Float32 samples are first converted to signed 24-bit PCM; FLAC preserves those converted integers exactly. **Sin compresión · PCM Float32** remains available to preserve the original captured samples in transport. FLAC falls back to PCM when unavailable and never switches to AAC during recovery.
+Version 0.3.0 adds **Depuración de latencia** in both apps: an explicit Auto/Manual mode, editable playback controls, live numerical measurements and charts, an event timeline, and local JSON export. Manual mode keeps the requested settings and codec fixed so that recovery does not silently change the experiment.
+
+Version 0.2.4 added **Sin pérdida · FLAC 24 bits**, using native Mac encoding and Android decoding. Captured Float32 samples are first converted to signed 24-bit PCM; FLAC preserves those converted integers exactly. **Sin compresión · PCM Float32** remains available to preserve the original captured samples in transport. In Automatic mode, unavailable FLAC falls back to PCM and never switches to AAC during recovery. Manual mode stops with a visible error if the selected codec cannot be honored.
 
 Version 0.2.3 added a custom shared reserve of 250–1000 ms in Mac settings, retaining the 500 ms default. It allowed balanced AAC and PCM to honor a 250 ms setting while stable AAC retained a 750 ms minimum. It also separated the Mac synchronization offset, rejected values outside ±100 ms instead of silently clamping them, and labeled Android's independent output buffer explicitly. FLAC uses the same reserve policy.
 
@@ -26,11 +28,12 @@ Version 0.2.2 introduced the approved mint U and sound-wave icon: a Mac app icon
 - Sends AAC-LC at a 256 or 160 kbps target, variable-bitrate FLAC of 24-bit PCM, or uncompressed stereo Float32 PCM, over encrypted TCP.
 - Authenticates pairing with a random key and encrypts packets with AES-256-GCM.
 - Plays locally on the Mac and remotely on Android, or only on Android.
-- Offers a configurable 250–1000 ms shared playback reserve, adaptive Android output buffering, and a separate manual Mac synchronization offset.
+- Offers the existing automatic 250–1000 ms reserve policy and a Manual debugging mode with a fixed 100–2000 ms reserve, requested output buffer, prefill, clock-correction and retry controls.
+- Shows live timing, buffer, network, processing and capture metrics, up to ten minutes of charts, and a bounded event history on both devices.
 - Imports a pairing link or QR through the Android camera's link handler.
 - Supports phone-volume control and Android background playback with a foreground-service notification.
 - Offers **Mezclar con otras apps**, enabled by default, to listen alongside another music app.
-- Attempts up to three reconnections after a connection failure; intentional stops do not automatically reconnect.
+- Makes up to three connection attempts per start. Manual mode can disable retries or repeat the same settings; intentional stops do not automatically reconnect.
 
 ## Requirements
 
@@ -44,16 +47,55 @@ The currently tested environments are a Mac mini M4 running macOS 26.6.1 and an 
 
 ## Try it
 
-1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.4).
+1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prereleases](https://github.com/AbrahamPanama/unisono/releases).
 2. Extract and open the Mac app. Install the APK on Android using your device's normal sideloading flow.
 3. Open Unísono's menu-bar icon, then the gear. Scan its QR with the phone camera, or copy the entire connection link into the Android app.
 4. Tap **Conectar** on Android and grant the Mac's audio-capture permission when prompted. Play audio on the Mac. Reconnect once if the first permission prompt interrupted pairing.
 5. Start with **Equilibrado · AAC adaptable** on Android. Choose **Más estable · AAC 160 kbps** for a larger starting reserve, **Sin pérdida · FLAC 24 bits** for compression after conversion to 24-bit PCM, or **Sin compresión · PCM Float32** to preserve the captured samples exactly in transport. Disconnect to change the mode.
-6. To customize the reserve, enter a whole number from **250 to 1000** under **Reserva de audio** in Mac settings, select **Aplicar y reconectar**, then reconnect on Android. The default is 500 ms. The stable AAC profile can raise a smaller Mac setting to its 750 ms minimum.
+6. Open **Depuración de latencia** on either device to observe the current session. Use **Manual** and **Usar valores actuales** to copy a baseline, then explicitly apply a change. The older Mac **Reserva de audio** setting still controls the automatic 250–1000 ms policy; its default is 500 ms, and stable AAC can request at least 750 ms.
 
 The apps currently use a Spanish interface. Closing the Mac panel leaves streaming active. **Detener transmisión** ends the session and restores normal Mac playback; **Salir de Unísono** quits the app.
 
 These are development builds: the Mac app is ad-hoc signed and not notarized for public distribution, and the Android APK uses a development signing identity. A locally rebuilt Android APK uses a different identity unless you preserve its generated keystore, so it cannot update an existing differently signed install directly.
+
+## Latency debugging
+
+<img src="design/mac-debug-preview.png" width="900" alt="Native Mac latency debugging window with light text, manual controls, numerical measurements and charts">
+
+*Interface illustration with clearly marked simulated data; these charts are not playback measurements.*
+
+Open **Depuración de latencia** from the Mac app or from the button near Android's quality controls. Update both apps to use Manual mode. Mac can send settings to a connected, compatible Android receiver; Android can also save settings while disconnected for its next connection. Typing into a field only edits a draft. **Aplicar y reiniciar audio** applies validated settings and restarts the session so the new timing is shared by both devices.
+
+| Control | Manual behavior |
+|---|---|
+| **Reserva de audio** | Integer **100–2000 ms**, used exactly as the shared reserve; automatic profile floors and recovery increases do not override it. |
+| **Búfer de salida solicitado** | Integer **20–500 ms**, requested from AudioTrack and kept fixed. Android may impose a larger effective buffer; the two values are displayed separately. |
+| **Precarga solicitada** | Integer **10–200 ms**, no greater than the requested buffer. The receiver fills this amount before starting; actual hardware behavior is reported separately. |
+| **Corregir deriva del reloj** | Enable bounded playback-speed correction, or disable it to hold the playback speed at 1.0 while investigating clock drift. |
+| **Reconectar después de un fallo** | Retry with the same manual reserve, requested buffer, prefill, codec and AAC bitrate. With retries disabled, a failure stops the session for inspection. |
+| Mac synchronization adjustment | The Mac debugging window allows **−500 to +500 ms** locally. Positive values delay the Mac, negative values advance it. This is separate from Android's reserve/buffer controls; combinations that cannot schedule the local output safely are rejected. |
+
+Manual mode never silently changes codec or lowers AAC bitrate. An unavailable codec or a Mac that does not confirm the complete manual configuration produces an error. Output underruns still appear in the counters/events; Manual does not automatically grow the requested buffer. Returning to **Automático** restores adaptive buffering, reserve recovery, codec fallback and clock correction. The ordinary Mac settings retain their narrower ±100 ms local adjustment; applying those settings clears the debugging-window override.
+
+For an experiment, copy the values of a working session into Manual, apply them, and change one control at a time. Keep the same codec and output route when comparing runs. **Pausar vista** / **Pausar gráficos** freezes the displayed values and charts while audio and telemetry collection continue. Resume to catch up. Clearing history removes the stored samples and events without stopping audio.
+
+The history stores up to ten minutes at approximately one sample per second. Missing or unavailable data appears as **—** and gaps in charts. The timing charts use per-second peaks for packet-arrival gaps, decoding and output writes, so a short stall is not hidden by a healthy last observation. Separate numerical values retain the latest observation. Jitter is a smoothed variation between audio-message arrival intervals and source timestamps over TCP; it is not a packet-loss measurement. Capture-to-arrival age includes encoding and transport. Decode timing includes waiting to enqueue decoded audio. Queued output is an estimate from written source samples and playback position.
+
+| Measurement | Interpretation |
+|---|---|
+| `reserveMs` | The actual shared scheduling reserve. |
+| `syncMs` | Android playback phase relative to the **shared reserve target**, excluding the Mac-only adjustment. Positive means later than that target. |
+| `syncAgeMs` | Age of the last successful Android playback timestamp. A failed timestamp read or more than three seconds without a successful read makes the phase and derived latency estimates unavailable. |
+| `estimatedLatencyMs` | `reserveMs + syncMs`: a software estimate from capture to Android playback timestamps, **not measured acoustic latency**. Do not add the output-buffer capacity again. |
+| `macRelativeMs` | `syncMs − macTrimMs`: estimated Android timing relative to the Mac's planned local output. Available only with local Mac playback and recent Mac telemetry; it is not a speaker-to-speaker measurement. |
+| Requested/effective buffer | The capacity requested from AudioTrack versus the value the device reports. Neither is the amount of audio currently queued or an independently measured extra delay. |
+| Current/cumulative underruns | AudioTrack underruns for the current output versus a running total across retries. A retry can reset the current-output counter; the event log preserves the failure sequence. |
+
+Additional metrics include RTT and clock offset, throughput and active AAC bitrate, Wi-Fi signal/link speed where available, app/output queues, reconnects, clock-correction speed, CPU and Java heap usage, and Mac capture/encoding/send/local-output measurements. RSSI alone cannot distinguish network, decoder, scheduling, clipping or output-device problems. CPU usage can exceed 100% across multiple cores; reported Wi-Fi link speed is not the measured audio throughput.
+
+Receiver byte/rate counters include all received plaintext messages, including controls. Mac send rate includes encrypted frame overhead. Their values therefore describe different byte counts and need not match exactly.
+
+**Exportar JSON** saves the selected local diagnostic history through the platform's file picker. It contains measurements, settings and bounded event descriptions; audio, pairing credentials, network addresses and device names are excluded or redacted. Exporting does not upload a report or record the stream. The Mac and Android exports use different documented JSON layouts; both identify unavailable measurements rather than substituting zero.
 
 ## Background playback and other music apps
 
@@ -73,6 +115,8 @@ The Android service exposes bounded state via `adb shell dumpsys activity servic
 
 ## Quality modes and popping
 
+The initial-reserve and automatic-recovery behavior in this section applies to **Automático**. **Manual** uses its explicit reserve and preserves codec/bitrate through retries; unavailable codecs stop the session instead of falling back.
+
 | Android mode | Audio transport | Initial reserve |
 |---|---|---|
 | Equilibrado · AAC adaptable (default) | AAC-LC, 256 kbps target; 160 kbps on recovery | 500 ms default; configurable from 250 ms |
@@ -86,7 +130,7 @@ FLAC retains the captured sample rate and sends 1024-frame blocks without encode
 
 Android now fills approximately 100 ms of output audio before playback, coalesces small PCM packets, increases its output buffer after underruns toward 250 ms (subject to device limits), smooths startup/volume changes over 10 ms, and filters clock corrections instead of adjusting aggressively every half-second. Corrections change at most every two seconds, with a 3 ms deadband and a 200 ppm step limit.
 
-After a failed session or repeated underruns, the receiver reconnects with 250 ms added to the actual negotiated reserve, capped at 1000 ms: a 250 ms session can recover at 500 ms, then 750 ms. The Mac uses the larger of its configured reserve and the receiver's request, so both restart on the same timeline. Balanced AAC, FLAC, and PCM initially request a 250 ms minimum; stable AAC requests 750 ms. This introduces a brief pause; it is not seamless bitrate switching. FLAC recovery retains FLAC when the codec is healthy, or falls back to PCM when decoding is unavailable; FLAC and PCM modes never recover through AAC. Automatic reductions in quality only occur within an AAC mode. There are at most three connection attempts per start, and a fresh manual start resets recovery state before negotiating from the selected profile and saved Mac setting. Older receivers' larger requests remain respected; update both apps to use 250 ms.
+After a failed session or repeated underruns, the receiver reconnects with 250 ms added to the actual negotiated reserve, capped at 1000 ms: a 250 ms session can recover at 500 ms, then 750 ms. The Mac uses the larger of its configured reserve and the receiver's request, so both restart on the same timeline. Balanced AAC, FLAC, and PCM initially request a 250 ms minimum; stable AAC requests 750 ms. This introduces a brief pause; it is not seamless bitrate switching. FLAC recovery retains FLAC when the codec is healthy, or falls back to PCM when decoding is unavailable; FLAC and PCM modes never recover through AAC. Automatic reductions in quality only occur within an AAC mode. There are at most three connection attempts per start, and a fresh user-initiated start resets recovery state before negotiating from the selected profile and saved Mac setting. Older receivers' larger requests remain respected; update both apps to use 250 ms.
 
 Strong Wi-Fi signal does not establish the cause of a pop. Small buffers, scheduling stalls, clock correction, source clipping, or the output device can also contribute. These changes address several plausible software causes; eliminating the reported pops on the physical S25 Ultra is still unverified.
 
@@ -96,15 +140,15 @@ FLAC uses integer PCM, while Core Audio capture supplies Float32. Unísono conve
 
 **PCM lossless transport is not the same as bit-perfect output.** In PCM mode, transmitted samples are preserved, but the source mixer, output mixer, volume changes, device resampling and Android clock correction can alter the rendered audio. Bluetooth may add lossy encoding and additional delay.
 
-At 48 kHz, stereo Float32 PCM uses about 3.07 Mbps before protocol overhead. The configured 250–1000 ms reserve sets the shared playback target, **not measured end-to-end latency**.
+At 48 kHz, stereo Float32 PCM uses about 3.07 Mbps before protocol overhead. The configured reserve sets the shared playback target, **not measured end-to-end latency**: 250–1000 ms under the automatic policy, or 100–2000 ms in Manual debugging mode.
 
 Three settings/readouts describe different parts of playback:
 
 | UI label | Meaning |
 |---|---|
-| **Reserva de audio** / **Reserva** | Shared scheduling reserve, entered on the Mac as a whole number from 250 to 1000 ms; default 500 ms. Android can request more for its stable profile or recovery. |
-| **Sincronización de la Mac** | Mac-only offset from −100 to +100 ms. Positive values delay the Mac; negative values advance it. Invalid values are rejected, not silently changed. |
-| **Búfer de salida** | Effective AudioTrack output-buffer capacity reported by Android. It depends on the device and can grow after underruns. It is neither the shared reserve nor a measurement of acoustic latency. |
+| **Reserva de audio** / **Reserva** | Shared scheduling reserve. Automatic policy: Mac 250–1000 ms, default 500 ms, with larger receiver requests respected. Manual debugging: exactly the requested 100–2000 ms. |
+| **Sincronización de la Mac** | Mac-only offset: −100 to +100 ms in ordinary settings, or −500 to +500 ms in debugging. Positive values delay the Mac; negative values advance it. Invalid or unschedulable values are rejected. |
+| **Búfer de salida** | Effective AudioTrack output-buffer capacity. Hardware limits apply; only Automatic grows the requested buffer after underruns. It is neither the shared reserve nor measured acoustic latency. |
 
 For example, **Reserva 250 ms · Búfer de salida 200 ms** can be correct: changing the reserve does not force Android's output-buffer capacity to change. The 200 ms readout is not a measurement of current queued audio or an independently measured extra 200 ms to add to the reserve.
 
@@ -175,6 +219,16 @@ UNISONO_TEST_QUALITY=flac UNISONO_TEST_RESERVE=250 UNISONO_TEST_NO_FLAC=1 bash s
 
 The first command compares 49,152 synthetic stereo frames bit for bit through the Swift FLAC encoder, encrypted wire, and native Android decoder. Its source includes silence, signed 24-bit boundaries, channel differences, pseudorandom samples, and least-significant bits; it also checks metadata, packet/timestamp continuity, and malformed-input rejection before the normal background/mixing checks. The second verifies larger-reserve recovery while retaining FLAC. The third makes the test server decline FLAC and checks PCM fallback during normal playback. These scripts target only the emulator; their test classes are excluded from release APKs.
 
+Latency-debugging integration scenarios use the same emulator-only runner:
+
+```sh
+UNISONO_DEBUG_CASE=manual bash scripts/test-android.sh
+UNISONO_DEBUG_CASE=jitter bash scripts/test-android.sh
+UNISONO_DEBUG_CASE=legacy bash scripts/test-android.sh
+```
+
+These exercise fixed manual values, validation and diagnostics, explicit local/remote reconfiguration, a stalled connection, and rejection of a server that does not confirm Manual. They are test entry points, not acoustic-latency measurements; see recorded validation results for completed runs. Test instrumentation is excluded from production APKs.
+
 A local-only physical-device probe is included in `tests/DeviceTest.java` and test APKs. It uses the app’s saved pairing link, starts a real session, and reports connection/timing counters without audio contents or pairing credentials. Its optional `flacRoundTrip` instrumentation argument runs the synthetic exact-sample check against a test server forwarded with `adb reverse`, preserving saved pairing settings. Test instrumentation is never included in release APKs.
 
 Mac appearance regression captures exercise a real popover in light and dark host windows:
@@ -188,6 +242,12 @@ mkdir -p build/mac
 Preview mode uses synthetic connection state and does not start the network listener.
 
 ## Validation so far
+
+For **v0.3.0**, native builds and the capture, codec, encryption, reserve-policy and diagnostic checks passed. The new emulator tests verify exact manual reserve despite a larger Mac floor, strict invalid-input rejection, local and authenticated remote restarts, rapid consecutive changes, unchanged manual values through an 850 ms stall, rejection of an older server that cannot confirm manual controls, continued playback while charts are paused, bounded histories, and redaction including compressed/scoped IPv6. A rapid-Apply teardown race found by the test was fixed by waiting for the previous playback thread within an interrupt-resilient deadline before reconnecting.
+
+The Android 15 emulator also passed FLAC exact24 decoding, background playback, mixing with a separate-UID player in both start orders, normal focus loss, and explicit stop. Automatic AAC recovery from an 850 ms stall still changed 256 to 160 kbps and reserve 250 to 500 ms.
+
+The production APK (without test instrumentation, using the existing signing certificate) was installed on the physical S25 Ultra with Android 16. Live Mac-to-phone control changes were confirmed in the receiver and both native debugging pages displayed real data. The phone received Mac capture/encode telemetry; the Mac received Android timing/queue telemetry. A manual session at 250 ms requested a 50 ms output buffer while the Bluetooth route reported 360 ms effective capacity. Charts visibly retained history through subsequent control changes. These observations validate the controls and telemetry path, not acoustic timing or absence of popping.
 
 For v0.2.4, the Mac build and `scripts/test.sh` passed. Native FLAC checks preserved 24-bit PCM exactly at 8, 44.1, 48, 96, and 192 kHz, including short final blocks, clipping, rounding, and noisy input. Capture-ring, encrypted PCM, reserve, and playback-policy regression checks also passed.
 

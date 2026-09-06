@@ -2,18 +2,25 @@ package app.unisono;
 
 /** Pure playback policy, independent of Android so its bounds can be regression-tested. */
 public final class PlaybackTuning {
-    private int bufferMs=100, lastUnderruns;
+    private int bufferMs, lastUnderruns;
+    private final boolean manual, clockCorrection;
+    public PlaybackTuning() { this(false,100,true); }
+    public PlaybackTuning(boolean manual,int requestedBufferMs,boolean clockCorrection) {
+        if(requestedBufferMs<20||requestedBufferMs>500) throw new IllegalArgumentException("Buffer must be between 20 and 500 ms");
+        this.manual=manual;this.bufferMs=manual?requestedBufferMs:100;this.clockCorrection=!manual||clockCorrection;
+    }
     private double filteredError;
     private float speed=1;
     private long lastChange;
     public int bufferMs() { return bufferMs; }
     public boolean observeUnderruns(int count) {
         if(count<=lastUnderruns) return false;
-        lastUnderruns=count; int old=bufferMs; bufferMs=Math.min(250,bufferMs+40); return old!=bufferMs;
+        lastUnderruns=count; if(manual) return false; int old=bufferMs; bufferMs=Math.min(250,bufferMs+40); return old!=bufferMs;
     }
     // Do not chase timestamp noise. Slow, infrequent changes avoid repeatedly disturbing
     // the device's time-stretch path. Buffer growth is never undone mid-session.
     public float correction(double errorMs,long now) {
+        if(!clockCorrection) return 1;
         if(!Double.isFinite(errorMs)) return speed;
         filteredError=0.9*filteredError+0.1*errorMs;
         if(now-lastChange<2_000_000_000L) return speed;
@@ -25,6 +32,7 @@ public final class PlaybackTuning {
     // The Mac's configured reserve still supplies the normal 500 ms default.
     // Balanced AAC and PCM permit a smaller explicit Mac setting; stable AAC keeps its floor.
     public static int initialReserve(String quality) { return "stable".equals(quality) ? 750 : 250; }
+    public static int nextReserve(int current,boolean manual) { return manual?current:nextReserve(current); }
     public static int nextReserve(int current) { return Math.min(1000,Math.max(250,current)+250); }
     public static final class Gain {
         private float current;

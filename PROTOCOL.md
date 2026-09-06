@@ -20,14 +20,16 @@ Envelope: 4-byte unsigned big-endian sealed length, 12-byte random nonce, cipher
 | 9 | Mac → Android | UTF-8 `Unisono/1` |
 | 3 | Android → Mac | uint64 client monotonic nanoseconds |
 | 4 | Mac → Android | echoed uint64 client time, uint64 server monotonic nanoseconds |
-| 5 | Android → Mac | optional JSON: codec (`pcm`, `aac-lc`, or `flac`), bitrate (160000 or 256000 for AAC), reserveMs (250–1000); empty means legacy PCM |
-| 1 | Mac → Android | JSON: version, rate, channels=2, format (`float32le`, `aac-lc`, or `flac`), delayMs, volume; AAC adds bitrate and primingFrames; FLAC adds bitDepth=24 and streamInfo (base64 of the raw 34-byte STREAMINFO payload) |
+| 5 | Android → Mac | optional JSON: codec (`pcm`, `aac-lc`, or `flac`), bitrate (160000 or 256000 for AAC), reserveMs (250–1000 automatic; 100–2000 manual), optional `debug` settings object; empty means legacy PCM |
+| 1 | Mac → Android | JSON: version, rate, channels=2, format (`float32le`, `aac-lc`, or `flac`), delayMs, volume; AAC adds bitrate and primingFrames; FLAC adds bitDepth=24 and streamInfo (base64 of the raw 34-byte STREAMINFO payload); echoes `debug` when supplied and accepted |
 | 2 | Mac → Android | uint64 source time ns, uint64 cumulative frame index, uint32 frame count, stereo interleaved float32 LE samples |
 | 10 | Mac → Android | uint64 source time ns, uint64 cumulative encoded frame index, uint32 frame count=1024, one raw AAC-LC access unit |
 | 11 | Mac → Android | uint64 source time ns, uint64 cumulative decoded-sample frame index, uint32 frame count, one complete raw FLAC frame; live encoder blocks contain 1024 stereo sample frames |
 | 6 | Mac → Android | float32 volume 0…1, big-endian bits |
 | 7 | Mac → Android | UTF-8 reason for intentional stop; receiver must not reconnect automatically |
-| 8 | Android → Mac | JSON heartbeat: device, underruns, optional syncMs, bufferMs, reserveMs, codec, kbps (received plaintext payload rate) |
+| 8 | Android → Mac | JSON heartbeat: legacy device/underruns/bufferMs/reserveMs/codec fields plus latest diagnostics, `debug`, and up to ten recent `events`; approximately once per second while messages arrive |
+| 12 | Mac → Android | JSON `{ "debug": { ... } }`: validated settings to save and apply through a controlled session restart |
+| 13 | Mac → Android | JSON Mac capture/encoding/send/local-output telemetry, approximately once per second during streaming |
 
 All fixed-width wire-header integers are big-endian. Float32 PCM payloads are little-endian; AAC and FLAC payloads use their codecs' bitstream layouts. One sample frame = left and right samples. Maximum sample frames per capture block = 4096. The receiver validates payload length, frame count and continuity before playback.
 
@@ -39,15 +41,67 @@ Before FLAC encoding, finite captured Float32 values are deterministically conve
 
 Each type-11 timestamp is the source origin plus its zero-based sample-frame index divided by the captured rate, expressed in integer nanoseconds. A raw FLAC frame follows the 20-byte timestamp/index/count header. The live encoder emits blocks of 1024 sample frames; finite encoder tests may drain a shorter final block. No AAC priming adjustment applies. Android validates packet sequencing and source timing, then requires decoded frame counts and output timestamps to match the input frames. It accepts a supported float, packed 24-bit, or left-aligned Int32 output path and rejects 16-bit output rather than silently reducing precision.
 
-If Mac FLAC initialization is unavailable, the reply advertises `float32le` and packets use type 2. If Android cannot initialize/decode FLAC at the required precision, it reconnects requesting PCM and reports that fallback. Older Mac implementations that do not recognize the `flac` request also reply with PCM. A FLAC or PCM selection never accepts AAC or switches to AAC during recovery. With a healthy codec, network recovery raises the reserve while retaining FLAC; the reserve increase is not a FLAC bitrate change.
+In Automatic mode, if Mac FLAC initialization is unavailable, the reply advertises `float32le` and packets use type 2. If Android cannot initialize/decode FLAC at the required precision, it reconnects requesting PCM and reports that fallback. Older Mac implementations that do not recognize the `flac` request also reply with PCM. A FLAC or PCM selection never accepts AAC or switches to AAC during recovery. With a healthy codec, automatic network recovery raises the reserve while retaining FLAC; the reserve increase is not a FLAC bitrate change. Manual mode rejects a response with a different codec or AAC bitrate and stops on a codec failure; it never accepts a fallback silently.
 
-Since app version 0.2.3, Mac settings accept a whole-number reserve from 250 to 1000 ms, with a 500 ms default. Balanced AAC, FLAC, and PCM initially request a 250 ms floor; stable AAC requests 750 ms. The shared `LatencySettings.negotiate` policy bounds the Mac value and receiver request to 250–1000 ms and selects their maximum; an omitted receiver reserve uses a 250 ms floor. Thus Mac 250 + balanced AAC/FLAC/PCM 250 negotiates 250 ms, Mac 500 + balanced AAC/FLAC/PCM 250 negotiates 500 ms, and Mac 250 + stable AAC 750 negotiates 750 ms. The Mac sends this actual shared reserve as `delayMs` in type 1 and both devices schedule from it.
+In Automatic mode, the policy introduced in app version 0.2.3 remains: Mac settings accept a whole-number reserve from 250 to 1000 ms, with a 500 ms default. Balanced AAC, FLAC, and PCM initially request a 250 ms floor; stable AAC requests 750 ms. The shared `LatencySettings.negotiate` policy bounds the Mac value and receiver request to 250–1000 ms and selects their maximum; an omitted receiver reserve uses a 250 ms floor. Thus Mac 250 + balanced AAC/FLAC/PCM 250 negotiates 250 ms, Mac 500 + balanced AAC/FLAC/PCM 250 negotiates 500 ms, and Mac 250 + stable AAC 750 negotiates 750 ms. The Mac sends this actual shared reserve as `delayMs` in type 1 and both devices schedule from it. Manual debugging overrides this policy with the exact validated `debug.reserveMs`.
 
-Failed sessions request an additional 250 ms from the actual negotiated reserve, capped at 1000 ms; 250 ms can recover at 500 ms, then 750 ms. Balanced AAC falls to 160 kbps during recovery, while PCM never switches to a lossy mode. A fresh manual start resets recovery and the previous negotiated value before using the selected profile again. Both ends reset indices, codec state and timeline on each connection. The envelope and `Unisono/1` greeting remain unchanged: legacy empty requests still select PCM, older receivers' 500/750 ms requests remain respected, and new receivers accept an old server's PCM response. Both apps need updating to use a 250 ms reserve where an older peer imposes a higher minimum.
+In Automatic mode, failed sessions request an additional 250 ms from the actual negotiated reserve, capped at 1000 ms; 250 ms can recover at 500 ms, then 750 ms. Balanced AAC falls to 160 kbps during recovery, while PCM never switches to a lossy mode. A fresh user-initiated start resets recovery before using the selected profile again. Both ends reset indices, codec state and timeline on each connection. The envelope and `Unisono/1` greeting remain unchanged: legacy empty requests still select PCM, older receivers' 500/750 ms requests remain respected, and new receivers in Automatic accept an old server's PCM response. Manual requires both apps to confirm the debugging settings as described below.
 
-Clock exchange: take eight RTT samples, use the shortest, estimate `localMinusServer = clientSend + RTT/2 - serverTime`. Source timestamps refer to the first captured frame of each packet. Local playout target = source timestamp + negotiated reserve; manual Mac trim affects only the Mac. The separate trim field accepts −100 to +100 ms and rejects invalid values rather than silently clamping them. It does not change `delayMs` or Android's output buffer. Android computes target in its monotonic clock domain, starts AudioTrack near it, then estimates phase error through AudioTimestamp. Playback speed correction is filtered, bounded to ±0.2%, rate-limited to 200 ppm per two seconds, and has a 3 ms deadband; this is deliberately not advertised as bit-perfect output.
+Clock exchange: take eight RTT samples, use the shortest, estimate `localMinusServer = clientSend + RTT/2 - serverTime`. During streaming, periodic type-3/type-4 exchanges refresh the displayed RTT without replacing the session's clock alignment. Source timestamps refer to the first captured frame of each packet. Shared playout target = source timestamp + negotiated reserve; Mac trim affects only the Mac. Ordinary Mac settings accept trim from −100 to +100 ms; the debugging window adds a separate −500 to +500 ms override. Both reject invalid values, and local output must have enough time to schedule. Trim does not change `delayMs` or Android's output buffer. Android computes the target in its monotonic clock domain, starts AudioTrack near it, then estimates phase error through AudioTimestamp. Enabled playback-speed correction is filtered, bounded to ±0.2%, rate-limited to 200 ppm per two seconds, and has a 3 ms deadband. Manual can disable correction to hold speed at 1.0; clock exchange still aligns timestamps. This is deliberately not advertised as bit-perfect output.
 
-In heartbeat type 8, `reserveMs` reports the negotiated scheduling reserve and `bufferMs` reports the effective AudioTrack output-buffer capacity in milliseconds. The output buffer depends on device limits and may grow after underruns; a 250 ms reserve with a 200 ms output buffer is valid. Neither field measures acoustic end-to-end latency, and `bufferMs` does not measure instantaneous queued audio or an independently measured extra delay to add to `reserveMs`.
+In heartbeat type 8, `reserveMs` reports the negotiated scheduling reserve and `bufferMs` reports the effective AudioTrack output-buffer capacity in milliseconds. The output buffer depends on device limits. Automatic can grow the requested buffer after underruns; Manual retains its request. A 250 ms reserve with a 200 ms effective output buffer is valid. Neither field measures acoustic end-to-end latency, and `bufferMs` does not measure instantaneous queued audio or an independently measured extra delay to add to `reserveMs`.
+
+## Latency debugging extension in app 0.3.0
+
+The extension uses the existing authenticated connection and does not change the greeting or encryption envelope. `debug` is the same complete object in types 5, 1, 8 and 12:
+
+```json
+{
+  "manual": true,
+  "reserveMs": 750,
+  "bufferMs": 100,
+  "prefillMs": 100,
+  "clockCorrection": true,
+  "retry": false
+}
+```
+
+All fields are required when the object is present. Booleans must be actual JSON booleans. Timing values must be finite integers: `reserveMs` **100–2000**, `bufferMs` **20–500**, and `prefillMs` **10–200** with `prefillMs <= bufferMs`. Invalid settings are rejected, not clamped. With `manual=false`, the timing and retry behavior comes from the normal automatic policy; the stored timing values remain a potential manual draft.
+
+With `manual=true`, Mac uses the exact `debug.reserveMs` for type-1 `delayMs`, bypassing automatic floors and maximum-of-peers negotiation. Android requires an identical complete settings echo, the requested `delayMs`, selected codec and selected AAC bitrate. Missing/mismatched confirmation, an unavailable codec, or unsupported decode precision stops the session with a visible error. No fallback to PCM or lower AAC bitrate is allowed. Manual output-buffer requests do not grow after underruns; device-imposed effective limits remain visible. `retry=false` stops on failure. `retry=true` permits the usual bounded attempts with the same manual controls and codec, without reserve increases. Intentional type-7 stops never request a retry.
+
+Type 12 only applies a valid complete object. Android saves it and requests a controlled restart: the old output is stopped before a replacement session starts, and the next type 5 carries the new configuration. Invalid commands leave settings unchanged and record an event. Mac sends remote configuration only to a connected receiver that has supplied the debugging capability through its settings object. Mac-only trim remains local state and is reported in type 13; it is not part of the Android `debug` object. Draft edits in either UI do not send type 12 or restart audio until the user applies them.
+
+An older Mac that ignores `debug` remains usable with a new receiver in Automatic mode. It cannot silently masquerade as supporting Manual because Android requires the settings echo. An older Android receiver without a `debug` object continues the earlier negotiation; Mac's remote controls are unavailable for that peer.
+
+### Receiver telemetry: type 8
+
+Measurements are finite numbers, booleans, selected enum strings, or JSON `null` when unavailable. Units are milliseconds unless a name specifies otherwise. The legacy `device` display field remains on the paired connection but is excluded from diagnostic histories/exports.
+
+| Group | Fields and meaning |
+|---|---|
+| Identity/state | `timeMs` wall-clock milliseconds; `monotonicMs` Android elapsed milliseconds; `connected`, `state`, `mode` (`auto`/`manual`), `debug`; `codec`, `rate` Hz, `bitrateKbps` for AAC only. |
+| Timing | `reserveMs`; `syncMs` relative to the shared reserve target; `syncAgeMs` since the last successful output timestamp; `estimatedLatencyMs = reserveMs + syncMs`; `macRelativeMs = syncMs - mac.macTrimMs` when local Mac playback and fresh telemetry exist. Positive phase means later playback. |
+| Output controls | `requestedBufferMs`, effective `bufferMs`, `requestedPrefillMs`, effective `prefillMs`, `speed` as a ratio, `clockCorrectionEnabled`, `retryEnabled`, generic `routeType`. |
+| Queue/failures | `queueMs`, `queueChunks`, `queuedOutputMs`; current-output `underruns`, accumulated `totalUnderruns`, `reconnects`, and optional redacted `lastFailure`. |
+| Transport | `packets` counts received audio messages; `bytes`/`kbps` count all received plaintext message bytes, including control messages, excluding encrypted framing overhead. `initialRttMs`, `rttMs`, `rttSource` (`initial`/`periodic`), `clockOffsetMs`; `packetGapMs`, `jitterMs`, `arrivalAgeMs`. |
+| Processing/peaks | Latest `decodeMs`, `writeMs`; per-report-window `packetGapMaxMs`, `arrivalAgeMaxMs`, `decodeMaxMs`, `writeMaxMs`. Peaks are consumed into the approximately 1 Hz sample, with observed peaks preserved when connection updates share a sample second. |
+| Resources | `uptimeMs`, process `cpuPercent` (can exceed 100 across cores), used Java `heapMb` in MiB; optional `wifiRssiDbm`, `wifiLinkSpeedMbps`. No SSID, BSSID or device name. |
+| Mac/events | Allowlisted `mac` type-13 measurements, `macTelemetryAgeMs`, and up to ten recent events. Events contain `timeMs`, `monotonicMs`, `type`/`code`, redacted `detail`/`message`, optional `settings`, and `lastSample`. |
+
+`syncMs` and derived latency estimates become unavailable after a failed AudioTimestamp read or more than three seconds without a successful read. Android only computes `macRelativeMs` with Mac telemetry received within three seconds; Mac's display also treats old receiver telemetry as missing. Histories draw missing measurements as gaps, not zeros or apparently current old values.
+
+`packetGapMs` is the observed interval between complete audio messages, not an IP packet-loss counter. `jitterMs` smooths the absolute difference between arrival interval and source-time interval. `arrivalAgeMs` compares capture time to arrival using the initial clock mapping, so it includes encoding and transport rather than pure network delay. `decodeMs` includes synchronous decode and waiting to enqueue PCM; `writeMs` measures the output write call. `queuedOutputMs` estimates pending audio from total written source frames minus the playback head. Output capacity is never added again to the latency estimate. None of these fields measures acoustic latency.
+
+### Sender telemetry: type 13
+
+Mac reports these numeric fields: `captureRate`, `capturedFrames`, `captureLagMs`, `captureOverflowCount`, `sourcePeakDbfs` (missing for a silent zero peak), `clippedSamples`, `encodeMs`, `encodeMaxMs`, `encodeAverageMs`, `encodedPackets`, `encodedBytes`, `sendKbps`, `pendingBytes`, `localPresentationMs`, `macTrimMs`, `localScheduleMs`, and `macTimeMs`. `localEnabled` and `streaming` are booleans. Android copies only allowed finite numeric/boolean fields. `sendKbps` includes encrypted frame overhead, unlike the receiver's plaintext `kbps`; these readouts should not be compared as identical byte counters. `encodeMaxMs` captures the maximum encode-call duration during the report window; `encodeAverageMs` is the running average. `sourcePeakDbfs` and out-of-range sample counts are statistics, not recorded audio. `localScheduleMs` is reserve plus Mac trim; `localPresentationMs` is the local output's reported presentation latency.
+
+### Histories and export
+
+Both apps maintain bounded in-memory histories of up to 600 samples and 200 events. Pausing the debugging view only freezes presentation; collection and playback continue. Clearing history does not stop audio. Export is initiated by the user through a local file picker and does not upload or record the stream. Measurements are allowlisted and event messages redact network/pairing identifiers.
+
+Android export has `schema: 1`, `exportedAtMs`, `notes`, `latest`, flat receiver `samples` (with optional nested `mac`), and `events`. Mac export has `schemaVersion: 1`, `application`, `demo`, `exportedAt`, `notes`, `samples` containing `timeMs`/`phone`/`mac`, and `events`. Missing values may be JSON null or omitted. Event `lastSample` is the last available telemetry snapshot, which can precede the event; it is not a measurement made exactly at the failure. The JSON export schemas are distinct from the unchanged wire protocol version.
 
 A large absolute AudioTimestamp phase offset alone must not trigger reconnection: device and route latency can produce this with healthy playback.
 

@@ -15,10 +15,20 @@ public class PlaybackTuningTest {
         }
         if(PlaybackTuning.initialReserve("balanced")!=250||PlaybackTuning.initialReserve("lossless")!=250||PlaybackTuning.initialReserve("stable")!=750) throw new AssertionError("Initial reserve policy");
         if(PlaybackTuning.nextReserve(250)!=500||PlaybackTuning.nextReserve(500)!=750||PlaybackTuning.nextReserve(750)!=1000||PlaybackTuning.nextReserve(1000)!=1000) throw new AssertionError("Reserve bounds");
+        PlaybackTuning fixed=new PlaybackTuning(true,80,false);
+        for(int i=0;i<100;i++) {
+            if(fixed.observeUnderruns(i)||fixed.bufferMs()!=80) throw new AssertionError("Manual output buffer changed");
+            if(fixed.correction(500,i*3_000_000_000L)!=1) throw new AssertionError("Disabled manual correction changed speed");
+        }
+        for(int value:new int[]{100,125,250,750,1500,2000}) if(PlaybackTuning.nextReserve(value,true)!=value) throw new AssertionError("Manual recovery changed reserve");
+        if(PlaybackTuning.nextReserve(250,false)!=500) throw new AssertionError("Automatic recovery disabled");
+        PlaybackTuning corrected=new PlaybackTuning(true,60,true);
+        for(int i=0;i<30;i++) corrected.correction(500,i*3_000_000_000L);
+        if(corrected.correction(500,99_000_000_000L)<=1) throw new AssertionError("Opt-in manual clock correction not applied");
         PlaybackTuning.Gain gain=new PlaybackTuning.Gain(); float[] data=new float[960];java.util.Arrays.fill(data,1);gain.apply(data,1,48000);
         for(int i=2;i<data.length;i+=2) if(data[i]-data[i-2]>1f/480+0.000001f) throw new AssertionError("Gain click");
         java.util.Arrays.fill(data,1);gain.apply(data,0,48000);
         for(int i=2;i<data.length;i+=2) if(data[i-2]-data[i]>1f/480+0.000001f) throw new AssertionError("Mute click");
-        System.out.println("PASS: adaptive buffer bounds, reserve growth, clock deadband/slew, smooth gain.");
+        System.out.println("PASS: adaptive bounds, fixed manual reserve/buffer, optional clock correction, smooth gain.");
     }
 }

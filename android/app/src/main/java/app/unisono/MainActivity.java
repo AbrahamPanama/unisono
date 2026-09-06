@@ -47,6 +47,8 @@ public class MainActivity extends Activity {
         route=text("Salida del teléfono",13,gray,false); audioControls.addView(route); gap(root,8);
         detail=text("PCM sin compresión · Perfil estable",13,gray,false); root.addView(detail); gap(root,22);
         connect=new Button(this); connect.setText("Conectar"); connect.setAllCaps(false); connect.setTextSize(18); connect.setTextColor(Color.rgb(12,27,18)); GradientDrawable bg=new GradientDrawable(); bg.setColor(green); bg.setCornerRadius(dp(12)); connect.setBackground(bg); root.addView(connect,new LinearLayout.LayoutParams(-1,dp(54))); connect.setOnClickListener(v->toggle());
+        gap(root,16);
+        Button debug=new Button(this);debug.setText("Depuración de latencia  ›");debug.setAllCaps(false);debug.setTextColor(Color.WHITE);debug.setTextSize(15);GradientDrawable debugBg=new GradientDrawable();debugBg.setColor(Color.rgb(45,59,51));debugBg.setCornerRadius(dp(12));debug.setBackground(debugBg);root.addView(debug,new LinearLayout.LayoutParams(-1,dp(50)));debug.setOnClickListener(v->startActivity(new Intent(this,DebugActivity.class)));
         gap(root,16); root.addView(text("Calidad y estabilidad",15,Color.WHITE,true));
         quality=new Spinner(this);
         ArrayAdapter<String> choices=new ArrayAdapter<String>(this,android.R.layout.simple_spinner_item,new String[]{"Equilibrado · AAC adaptable","Más estable · AAC 160 kbps","Sin pérdida · FLAC 24 bits","Sin compresión · PCM Float32"}) {
@@ -61,7 +63,7 @@ public class MainActivity extends Activity {
             public void onItemSelected(AdapterView<?> a,View v,int p,long id) { getSharedPreferences("playback",MODE_PRIVATE).edit().putString("quality",qualityIds[p]).apply(); }
         });
         root.addView(quality,new LinearLayout.LayoutParams(-1,dp(48)));
-        root.addView(text("FLAC conserva el audio convertido a 24 bits; PCM Float32 conserva las muestras capturadas. AAC tiene pérdida. Reserva desde 250 ms; Más estable pide 750 ms.",13,gray,false));
+        root.addView(text("FLAC conserva el audio convertido a 24 bits; PCM Float32 conserva las muestras capturadas. AAC tiene pérdida. En Automático, reserva desde 250 ms; Más estable pide 750 ms. El modo Manual está en Depuración de latencia.",13,gray,false));
         gap(root,12);
         mix=new CheckBox(this); mix.setText("Mezclar con otras apps"); mix.setTextColor(Color.WHITE); mix.setTextSize(15); mix.setButtonTintList(android.content.res.ColorStateList.valueOf(green));
         mix.setChecked(getSharedPreferences("playback",MODE_PRIVATE).getBoolean("mixWithOtherApps",true));
@@ -86,7 +88,7 @@ public class MainActivity extends Activity {
         mix.setEnabled(!active&&!busy); mix.setAlpha(active||busy ? 0.65f : 1f);
         state.setText(AudioService.status); hero.setText(active ? "Mac +\n"+(Build.MODEL.startsWith("SM-S938") ? "Galaxy S25 Ultra" : Build.MODEL) : "Escucha tu Mac.\nTambién aquí."); audioControls.setVisibility(active ? View.VISIBLE : View.GONE);
         pairing.setVisibility(active ? View.GONE : View.VISIBLE); connect.setText(active ? "Desconectar" : busy ? "Cancelar conexión" : "Conectar");
-        volume.setEnabled(active); if(!volume.isPressed()) volume.setProgress((int)(AudioService.volume*100)); detail.setText(active||busy ? AudioService.details : "Reserva configurable en la Mac · 250–1000 ms"); route.setText(AudioService.route);
+        volume.setEnabled(active); if(!volume.isPressed()) volume.setProgress((int)(AudioService.volume*100)); DebugSettings debug=DebugSettings.load(this);detail.setText(active||busy ? AudioService.details : debug.manual ? "Manual · Reserva solicitada "+debug.reserveMs+" ms" : "Automático · Consulta los ajustes y las gráficas en Depuración de latencia"); route.setText(AudioService.route);
     }
     @Override public void onResume() { super.onResume(); handler.post(refresh); }
     @Override public void onPause() { handler.removeCallbacks(refresh); super.onPause(); }

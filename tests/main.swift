@@ -28,7 +28,11 @@ server.onReady={
     var cfg: [String:Any] = ["rate":48000,"channels":2,"format":"float32le","version":1]
     if let encoder=encoder { cfg["format"]="aac-lc";cfg["bitrate"]=encoder.bitRate;cfg["primingFrames"]=encoder.primingFrames }
     if let flacEncoder=flacEncoder { cfg["format"]="flac";cfg["bitDepth"]=flacEncoder.bitDepth;cfg["streamInfo"]=flacEncoder.streamInfo.base64EncodedString() }
-    cfg["delayMs"]=LatencySettings.negotiate(macMilliseconds:macReserve,receiverMilliseconds:req["reserveMs"] as? Int)
+    if let object=req["debug"] as? [String:Any], !CommandLine.arguments.contains("--legacy-debug") {
+        guard let debug=try? DebugSettings.parse(object) else { server.endSession("Ajustes de depuración inválidos"); return }
+        cfg["debug"]=debug.json
+        cfg["delayMs"]=debug.reserve(macMilliseconds:macReserve,receiverMilliseconds:req["reserveMs"] as? Int)
+    } else { cfg["delayMs"]=LatencySettings.negotiate(macMilliseconds:macReserve,receiverMilliseconds:req["reserveMs"] as? Int) }
     server.send(1,try! JSONSerialization.data(withJSONObject:cfg))
     let t=DispatchSource.makeTimerSource(queue:.main)
     t.schedule(deadline:.now()+0.01,repeating:.nanoseconds(5_333_333))
@@ -46,7 +50,13 @@ server.onReady={
         index+=256
     }; timer=t; t.resume()
 }
-server.onCommand={ type,data in if type==6 { server.send(6,data) }; if type==7 { server.endSession("Test stop") }; if type==8 && CommandLine.arguments.contains("--long") { print(String(data:data,encoding:.utf8) ?? "stats"); fflush(stdout) } }
+server.onCommand={ type,data in
+    if type==6 { server.send(6,data) }
+    if type==7 { server.endSession("Test stop") }
+    if type==8 && CommandLine.arguments.contains("--long") { print(String(data:data,encoding:.utf8) ?? "stats"); fflush(stdout) }
+    // Fixture-only control: exercise the real authenticated Mac->Android type-12 path.
+    if type==14 && CommandLine.arguments.contains("--debug-test") { server.send(12,data) }
+}
 server.onDisconnect={ _ in timer?.cancel(); timer=nil; encoder=nil; flacEncoder=nil; held=[] }
 try server.listen()
 print("TEST SERVER READY"); fflush(stdout)

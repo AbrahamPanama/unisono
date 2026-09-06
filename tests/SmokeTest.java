@@ -79,6 +79,7 @@ public class SmokeTest extends Instrumentation {
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
+            DebugSettings.defaults().save(getTargetContext());
             if(Build.VERSION.SDK_INT>=33) getTargetContext().registerReceiver(fixtureState,new IntentFilter("app.unisono.TEST_PLAYER_STATE"),Context.RECEIVER_EXPORTED);
             else getTargetContext().registerReceiver(fixtureState,new IntentFilter("app.unisono.TEST_PLAYER_STATE"));
             getTargetContext().getSharedPreferences("playback",Context.MODE_PRIVATE).edit().putBoolean("mixWithOtherApps",true).putString("quality",selectedQuality).commit();

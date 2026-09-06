@@ -19,8 +19,21 @@ final class Capture {
     var started=false, firstCapture:UInt64=0
     var scratch=[Float](repeating:0,count:8192)
     var seenOverflow:UInt64=0
+    var captureLagMs=0.0, sourcePeak:Float=0
+    var clippedSamples:UInt64=0, capturedFrames:UInt64=0
+    var overflowCount:UInt64=0
+    var presentationMs:Double { (engine?.outputNode.presentationLatency ?? 0)*1000 }
+    func diagnostics() -> [String:Any] {
+        var result:[String:Any] = ["captureRate":rate,"capturedFrames":capturedFrames,"captureLagMs":captureLagMs,
+            "captureOverflowCount":overflowCount,"clippedSamples":clippedSamples,"localEnabled":local,
+            "macTrimMs":trim*1000,"localScheduleMs":(delay+trim)*1000]
+        if local && engine != nil { result["localPresentationMs"]=presentationMs }
+        if sourcePeak>0 { result["sourcePeakDbfs"]=20*log10(Double(sourcePeak)) }
+        return result
+    }
     func start(delay:Double,trim:Double,local:Bool) throws {
         stop(); self.delay=delay; self.trim=trim; self.local=local
+        captureLagMs=0; sourcePeak=0; clippedSamples=0; capturedFrames=0; overflowCount=0
         do {
             var pid=getpid(); var pidSize=UInt32(MemoryLayout<AudioObjectID>.size); var own:AudioObjectID=0
             var pa=address(kAudioHardwarePropertyTranslatePIDToProcessObject)
@@ -50,7 +63,8 @@ final class Capture {
     }
     func drain() {
         guard let ring=ring else { return }
-        if ring_overflows(ring)>seenOverflow { onError?("La captura se atrasó. Se detuvo para evitar pérdida silenciosa de audio."); return }
+        overflowCount=ring_overflows(ring)
+        if overflowCount>seenOverflow { onError?("La captura se atrasó. Se detuvo para evitar pérdida silenciosa de audio."); return }
         var n:UInt32=0,host:UInt64=0
         var iterations=0
         while ring_pop(ring,&scratch,&n,&host) != 0 {
@@ -59,6 +73,11 @@ final class Capture {
             let ns=UInt64(AVAudioTime.seconds(forHostTime:host)*1e9)
             if firstCapture==0 { firstCapture=ns }
             let pts=firstCapture+UInt64(Double(frameIndex)/rate*1e9)
+            captureLagMs=max(0,(Double(clockNS())-Double(pts))/1e6)
+            capturedFrames+=UInt64(n); sourcePeak=0
+            for sample in scratch.prefix(Int(n)*2) where sample.isFinite {
+                sourcePeak=max(sourcePeak,abs(sample)); if abs(sample)>=1 { clippedSamples+=1 }
+            }
             if clockNS()>pts+UInt64(delay*1e9) { onError?("El audio llegó tarde. Aumenta la reserva mínima de audio."); return }
             var packet=Data(); packet.be(pts); packet.be(frameIndex); packet.be(n)
             scratch.withUnsafeBytes { packet.append(contentsOf:$0.prefix(Int(n)*8)) }
@@ -72,6 +91,9 @@ final class Capture {
                 let outputLatency=engine?.outputNode.presentationLatency ?? 0
                 if !started {
                     let startNS=Double(pts)/1e9+delay+trim-outputLatency
+                    guard startNS>Double(clockNS())/1e9 else {
+                        onError?("La salida local se programaría en el pasado. Aumenta la reserva o el ajuste de la Mac."); return
+                    }
                     p.scheduleBuffer(b); p.play(at:AVAudioTime(hostTime:AVAudioTime.hostTime(forSeconds:startNS))); started=true
                 } else { p.scheduleBuffer(b) }
             }

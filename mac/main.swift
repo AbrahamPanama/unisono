@@ -38,6 +38,19 @@ func ips() -> [String] {
 
 final class App:NSObject,NSApplicationDelegate {
     var item:NSStatusItem!, pop=NSPopover(), settings:NSWindow?
+    let debugStats=DebugStats()
+    var debugWindow:DebugWindow?
+    var encodeMs=0.0, encodeTotalMs=0.0, encodeMaxMs=0.0
+    var encodeBlocks:UInt64=0, encodedPackets:UInt64=0, encodedBytes:UInt64=0
+    var statsLastBytes:UInt64=0, statsLastTime=clockNS()
+    var sessionReserveMs=500
+    var debugTrimMilliseconds:Double {
+        if UserDefaults.standard.bool(forKey:"debugTrimOverride") {
+            let ms=UserDefaults.standard.double(forKey:"debugTrimMs")
+            if ms.isFinite && (-500...500).contains(ms) { return ms }
+        }
+        return trim*1000
+    }
     let capture=Capture()
     var encoder:AACEncoder?
     var flacEncoder:FLACEncoder?
@@ -58,7 +71,7 @@ final class App:NSObject,NSApplicationDelegate {
         menuIcon?.size=NSSize(width:20,height:18); menuIcon?.isTemplate=true
         item.button?.image=menuIcon; item.button?.setAccessibilityLabel("Unísono"); item.button?.target=self; item.button?.action=#selector(toggle)
         item.button?.toolTip="Unísono — Audio compartido"
-        pop.appearance=NSAppearance(named:.darkAqua); pop.behavior = .transient; pop.contentSize=NSSize(width:360,height:558)
+        pop.appearance=NSAppearance(named:.darkAqua); pop.behavior = .transient; pop.contentSize=NSSize(width:360,height:596)
         let vc=NSViewController(); vc.view=makePanel(); pop.contentViewController=vc
         server=LinkServer(secret:secret)
         server.onReady={ [weak self] in self?.startAudio() }
@@ -67,6 +80,7 @@ final class App:NSObject,NSApplicationDelegate {
             guard let self=self else { return }
             if type==7 { self.server.disconnect("") }
             if type==8 { self.lastHeartbeat=clockNS(); if let obj=(try? JSONSerialization.jsonObject(with:payload)) as? [String:Any] {
+                self.debugStats.acceptPhone(obj)
                 let error=(obj["syncMs"] as? Double).map { String(format:"Desfase estimado: %+.0f ms",$0) } ?? "Midiendo sincronización…"
                 let buffer=(obj["bufferMs"] as? Int).map { " · Búfer de salida \($0) ms" } ?? ""
                 let gaps=(obj["underruns"] as? Int).map { " · Cortes: \($0)" } ?? ""
@@ -77,25 +91,36 @@ final class App:NSObject,NSApplicationDelegate {
         capture.onPacket={ [weak self] p in
             guard let self=self else { return }
             do {
-                if let flac=self.flacEncoder { for packet in try flac.encode(p) { if !self.server.ready { break }; self.server.send(11,packet) } }
-                else if let encoder=self.encoder { for packet in try encoder.encode(p) { if !self.server.ready { break }; self.server.send(10,packet) } }
-                else { self.server.send(2,p) }
+                let start=clockNS(), packets:[Data], type:UInt8
+                if let flac=self.flacEncoder { packets=try flac.encode(p); type=11 }
+                else if let encoder=self.encoder { packets=try encoder.encode(p); type=10 }
+                else { packets=[p]; type=2 }
+                self.encodeMs=type==2 ? 0 : Double(clockNS()-start)/1e6
+                self.encodeMaxMs=max(self.encodeMaxMs,self.encodeMs); self.encodeTotalMs+=self.encodeMs; self.encodeBlocks+=1
+                for packet in packets {
+                    if !self.server.ready { break }
+                    self.encodedPackets+=1; self.encodedBytes+=UInt64(packet.count)
+                    self.server.send(type,packet)
+                }
             } catch { self.server.disconnect("No se pudo codificar el audio. Prueba PCM sin pérdida.") }
         }
         capture.onError={ [weak self] e in self?.server.disconnect(e) }
-        if !CommandLine.arguments.contains("--preview") && !CommandLine.arguments.contains("--preview-settings") { do { try server.listen() } catch { stopAudio(message:error.localizedDescription) } }
+        if !CommandLine.arguments.contains("--preview") && !CommandLine.arguments.contains("--preview-settings") && !CommandLine.arguments.contains("--preview-debug") { do { try server.listen() } catch { stopAudio(message:error.localizedDescription) } }
         watchdog=Timer.scheduledTimer(withTimeInterval:1,repeats:true) { [weak self] _ in
             guard let self=self else { return }; if self.streaming && clockNS()-self.lastHeartbeat>8_000_000_000 { self.server.disconnect("El celular dejó de responder. Conéctalo de nuevo.") }
+            self.collectDebugStats()
         }
         NSWorkspace.shared.notificationCenter.addObserver(self,selector:#selector(sleeping),name:NSWorkspace.willSleepNotification,object:nil)
         var a=address(kAudioHardwarePropertyDefaultOutputDevice)
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject),&a,.main) { [weak self] _,_ in if self?.streaming==true { self?.server.disconnect("Cambió la salida de la Mac. Vuelve a conectar.") } }
         if CommandLine.arguments.contains("--preview") { preview() }
+        else if CommandLine.arguments.contains("--preview-debug") { debugStats.loadFixture(); openDebug(); snapshot(debugWindow!.window) }
         else if CommandLine.arguments.contains("--preview-settings") { secret=Data(repeating:0x11,count:16); openSettings(); snapshot(settings!) }
+        else if CommandLine.arguments.contains("--open-debug") { DispatchQueue.main.asyncAfter(deadline:.now()+0.5) { self.openDebug() } }
         else if CommandLine.arguments.contains("--open") { DispatchQueue.main.asyncAfter(deadline:.now()+0.5) { self.toggle() } }
     }
     func makePanel()->NSView {
-        let v=Surface(frame:NSRect(x:0,y:0,width:360,height:558))
+        let v=Surface(frame:NSRect(x:0,y:0,width:360,height:596))
         func put(_ sub:NSView,_ x:CGFloat,_ y:CGFloat,_ w:CGFloat,_ h:CGFloat) { sub.frame=NSRect(x:x,y:y,width:w,height:h); v.addSubview(sub) }
         func line(_ y:CGFloat) { let b=NSBox(); b.boxType = .custom; b.borderWidth=0; b.fillColor=NSColor(white:0.20,alpha:1); put(b,0,y,360,1) }
         put(label("Unísono",24,.semibold),28,23,245,35)
@@ -113,7 +138,9 @@ final class App:NSObject,NSApplicationDelegate {
         line(466)
         let change=NSButton(title:"Cambiar dispositivo                         ›",target:self,action:#selector(openSettings)); change.isBordered=false; change.alignment = .left; change.font = .systemFont(ofSize:15); tintTitle(change); put(change,27,480,307,26)
         line(517)
-        let quit=NSButton(title:"Salir de Unísono",target:self,action:#selector(quitApp)); quit.isBordered=false; quit.font = .systemFont(ofSize:14); quit.contentTintColor=muted; quit.alignment = .left; tintTitle(quit,muted); put(quit,27,527,220,25)
+        let diagnostics=NSButton(title:"Depuración de latencia…",target:self,action:#selector(openDebug)); diagnostics.isBordered=false; diagnostics.alignment = .left; diagnostics.font = .systemFont(ofSize:14); tintTitle(diagnostics); put(diagnostics,27,527,307,26)
+        line(555)
+        let quit=NSButton(title:"Salir de Unísono",target:self,action:#selector(quitApp)); quit.isBordered=false; quit.font = .systemFont(ofSize:14); quit.contentTintColor=muted; quit.alignment = .left; tintTitle(quit,muted); put(quit,27,565,220,25)
         detailLabel=label("",12,.regular,muted)
         return v
     }
@@ -128,24 +155,77 @@ final class App:NSObject,NSApplicationDelegate {
             let request=(try? JSONSerialization.jsonObject(with:server.captureRequest)) as? [String:Any] ?? [:]
             let wantsAAC=(request["codec"] as? String)=="aac-lc"
             let wantsFLAC=(request["codec"] as? String)=="flac"
-            let reserveMs=LatencySettings.negotiate(macMilliseconds:reserveMilliseconds,receiverMilliseconds:request["reserveMs"] as? Int)
+            var debug:DebugSettings?
+            if let object=request["debug"] {
+                guard let dictionary=object as? [String:Any] else { throw DebugSettings.Invalid.configuration }
+                debug=try DebugSettings.parse(dictionary)
+            }
+            let reserveMs=debug?.reserve(macMilliseconds:reserveMilliseconds,receiverMilliseconds:request["reserveMs"] as? Int) ?? LatencySettings.negotiate(macMilliseconds:reserveMilliseconds,receiverMilliseconds:request["reserveMs"] as? Int)
             let reserve=Double(reserveMs)/1000
-            try capture.start(delay:reserve,trim:trim,local:local)
+            guard !local || Double(reserveMs)+debugTrimMilliseconds>=50 else { throw NSError(domain:"Debug",code:1,userInfo:[NSLocalizedDescriptionKey:"Reserva + ajuste de la Mac debe ser al menos 50 ms. Corrige el ajuste en Depuración de latencia."]) }
+            try capture.start(delay:reserve,trim:debugTrimMilliseconds/1000,local:local)
+            if let debug=debug { debugStats.setProfile(debug) } else { debugStats.profile=nil; debugStats.profileRevision+=1 }
+            encodeMs=0; encodeMaxMs=0; encodeTotalMs=0; encodeBlocks=0; encodedPackets=0; encodedBytes=0; sessionReserveMs=reserveMs
             encoder=wantsAAC ? try? AACEncoder(sourceRate:capture.rate,bitRate:(request["bitrate"] as? Int)==160000 ? 160000 : 256000) : nil
             flacEncoder=wantsFLAC ? try? FLACEncoder(sourceRate:capture.rate) : nil
             var config:[String:Any]=["rate":flacEncoder?.rate ?? encoder?.rate ?? Int(capture.rate),"channels":2,"format":flacEncoder != nil ? "flac" : encoder==nil ? "float32le" : "aac-lc","delayMs":reserveMs,"version":1,"volume":volume.doubleValue]
+            if let debug=debug { config["debug"]=debug.json }
             if let encoder=encoder { config["bitrate"]=encoder.bitRate; config["primingFrames"]=encoder.primingFrames }
             if let flac=flacEncoder { config["bitDepth"]=flac.bitDepth; config["streamInfo"]=flac.streamInfo.base64EncodedString() }
             let quality=flacEncoder != nil ? "FLAC · 24 bits" : encoder.map { "AAC · \($0.bitRate/1000) kbps" } ?? "PCM sin compresión"
             server.send(1,try JSONSerialization.data(withJSONObject:config)); streaming=true; lastHeartbeat=clockNS()
+            debugStats.connected=true; debugStats.addEvent("connected","Conectado · \(quality) · reserva \(reserveMs) ms · \(debug?.manual == true ? "Manual" : "Automático")",settings:debug,macTrimMs:debugTrimMilliseconds)
             stateLabel.stringValue="●  Transmitiendo"; deviceLabel.stringValue="Mac +\nGalaxy S25 Ultra"; mainButton.title="Detener transmisión"; tintTitle(mainButton,buttonInk); volume.isEnabled=true
             qualityLabel.stringValue="\(quality) · \(reserveMs) ms de reserva"
-        } catch { server.disconnect(error.localizedDescription); stopAudio(message:error.localizedDescription) }
+        } catch { server.endSession(error.localizedDescription); stopAudio(message:error.localizedDescription) }
     }
     func stopAudio(message:String) {
+        if streaming {
+            let code=message.contains("captura se atrasó") ? "capture_overflow" : message.contains("audio llegó tarde") ? "capture_late" : message.contains("programaría en el pasado") ? "local_schedule_late" : message.contains("codificar") ? "encode_failed" : message.contains("red se atrasó") ? "send_backpressure" : message.contains("Cambió la salida") ? "local_route_changed" : "disconnected"
+            debugStats.addEvent(code,message.isEmpty ? "Conexión finalizada" : String(message.prefix(220)))
+        }
+        debugStats.connected=false; debugStats.phoneAt=nil
         capture.stop(); encoder=nil; flacEncoder=nil; streaming=false; stateLabel.stringValue="●  Listo para conectar"; mainButton.title="Conectar celular"; tintTitle(mainButton,buttonInk); volume.isEnabled=false; deviceLabel.stringValue="Mac +\nTu Android"; qualityLabel.stringValue="Calidad adaptable · Lista para conectar"
         detailLabel.stringValue=message
         if !message.isEmpty && message != "Listo para conectar" { stateLabel.stringValue="●  Conexión detenida"; item.button?.toolTip="Unísono: "+message }
+    }
+    func collectDebugStats() {
+        guard !debugStats.fixture else { return }
+        let now=clockNS(), elapsed=Double(now-statsLastTime)/1e9
+        let bytes=server.sentBytes>=statsLastBytes ? server.sentBytes-statsLastBytes : 0
+        statsLastBytes=server.sentBytes; statsLastTime=now
+        var object=capture.diagnostics()
+        object["encodeMs"]=encodeMs; object["encodeMaxMs"]=encodeMaxMs; encodeMaxMs=0; object["encodeAverageMs"]=encodeBlocks>0 ? encodeTotalMs/Double(encodeBlocks) : 0
+        object["encodedPackets"]=encodedPackets; object["encodedBytes"]=encodedBytes
+        object["sendKbps"]=elapsed>0 ? Double(bytes)*8/elapsed/1000 : 0
+        object["pendingBytes"]=server.pending; object["streaming"]=streaming; object["macTimeMs"]=Date().timeIntervalSince1970*1000
+        debugStats.tick(mac:object,streaming:streaming)
+        if streaming,let payload=try? JSONSerialization.data(withJSONObject:object) { server.send(13,payload) }
+        debugWindow?.refresh()
+    }
+    @objc func openDebug() {
+        pop.performClose(nil)
+        if debugWindow==nil {
+            let window=DebugWindow(store:debugStats)
+            window.currentTrim={ [weak self] in guard let self=self else { return 0 }; return self.debugStats.fixture ? 0 : self.debugTrimMilliseconds }
+            window.saveTrim={ [weak self] trimMs in
+                guard let self=self else { return }
+                UserDefaults.standard.set(trimMs,forKey:"debugTrimMs"); UserDefaults.standard.set(true,forKey:"debugTrimOverride")
+                self.debugStats.addEvent("mac_offset_saved","Ajuste Mac guardado para la próxima conexión: \(Int(trimMs)) ms",macTrimMs:trimMs)
+            }
+            window.apply={ [weak self] profile,trimMs in
+                guard let self=self,self.streaming,self.server.ready,self.debugStats.profile != nil else { throw NSError(domain:"Debug",code:1,userInfo:[NSLocalizedDescriptionKey:"Conecta Android con una versión compatible para aplicar los ajustes."]) }
+                let target=profile.manual ? profile.reserveMs : max(self.reserveMilliseconds,250)
+                let minimum=max(50,self.capture.presentationMs+20)
+                guard !self.local || Double(target)+trimMs>=minimum else { throw NSError(domain:"Debug",code:2,userInfo:[NSLocalizedDescriptionKey:"Reserva + ajuste de la Mac debe superar \(Int(ceil(minimum))) ms para esta salida."]) }
+                let payload=try JSONSerialization.data(withJSONObject:["debug":profile.json])
+                UserDefaults.standard.set(trimMs,forKey:"debugTrimMs"); UserDefaults.standard.set(true,forKey:"debugTrimOverride")
+                self.server.send(12,payload)
+                self.debugStats.addEvent("settings_requested","Ajustes enviados · \(profile.manual ? "Manual" : "Automático") · reserva \(profile.reserveMs) ms · búfer \(profile.bufferMs) ms · ajuste Mac \(Int(trimMs)) ms",settings:profile,macTrimMs:trimMs)
+            }
+            debugWindow=window; window.loadControls(force:true)
+        }
+        debugWindow?.show()
     }
     @objc func openSettings() {
         pop.performClose(nil)
@@ -179,7 +259,7 @@ final class App:NSObject,NSApplicationDelegate {
     @objc func saveSettings() {
         guard let reserve=LatencySettings.parseReserve(delayField.stringValue) else { settingsFeedback.textColor = .systemOrange; settingsFeedback.stringValue="Reserva: escribe un número entero entre 250 y 1000 ms."; return }
         guard let ms=LatencySettings.parseTrim(trimField.stringValue) else { settingsFeedback.textColor = .systemOrange; settingsFeedback.stringValue="Sincronización: usa −100 a +100 ms. Para 250 ms, cambia la reserva de audio."; return }
-        UserDefaults.standard.set(Double(reserve)/1000,forKey:"delay"); UserDefaults.standard.set(ms/1000,forKey:"trim"); UserDefaults.standard.set(localSwitch.state == .on,forKey:"local")
+        UserDefaults.standard.set(Double(reserve)/1000,forKey:"delay"); UserDefaults.standard.set(ms/1000,forKey:"trim"); UserDefaults.standard.set(localSwitch.state == .on,forKey:"local"); UserDefaults.standard.set(false,forKey:"debugTrimOverride")
         delayField.stringValue=String(reserve); trimField.stringValue=String(format:"%g",ms)
         settingsFeedback.textColor=mint; settingsFeedback.stringValue="Reserva guardada: \(reserve) ms. Vuelve a conectar desde Android."
         server.endSession("Ajustes guardados. Vuelve a conectar desde Android.")
@@ -202,7 +282,7 @@ final class App:NSObject,NSApplicationDelegate {
             }
             return
         }
-        let w=NSWindow(contentRect:NSRect(x:0,y:0,width:360,height:558),styleMask:[.borderless],backing:.buffered,defer:false); w.appearance=NSApp.appearance; w.contentView=pop.contentViewController!.view; w.center(); w.makeKeyAndOrderFront(nil); settings=w
+        let w=NSWindow(contentRect:NSRect(x:0,y:0,width:360,height:596),styleMask:[.borderless],backing:.buffered,defer:false); w.appearance=NSApp.appearance; w.contentView=pop.contentViewController!.view; w.center(); w.makeKeyAndOrderFront(nil); settings=w
         snapshot(w)
     }
     func snapshot(_ w:NSWindow) {

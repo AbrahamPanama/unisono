@@ -20,6 +20,7 @@ final class LinkServer {
     var captureRequest=Data()
     var ready=false
     var pending=0
+    var sentBytes:UInt64=0
     var onReady: (() -> Void)?
     var onCommand: ((UInt8,Data) -> Void)?
     var onDisconnect: ((String) -> Void)?
@@ -95,7 +96,7 @@ final class LinkServer {
             let body=try AES.GCM.seal(Data([type])+payload,using:key).combined!
             var frame=Data(); frame.be(UInt32(body.count)); frame.append(body)
             guard pending+frame.count<1_000_000 else { disconnect("La red se atrasó. Vuelve a conectar con un perfil más estable."); return }
-            pending+=frame.count; let gen=generation
+            pending+=frame.count; sentBytes+=UInt64(frame.count); let gen=generation
             c.send(content:frame,completion:.contentProcessed { [weak self] err in
                 guard let self=self,self.generation==gen else { return }; self.pending-=frame.count
                 if let err=err { self.disconnect(err.localizedDescription) } else { completion?() }
