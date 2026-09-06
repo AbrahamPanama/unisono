@@ -10,7 +10,7 @@ import java.io.*;
 /** Installed only in the test APK; exercises the real Activity, service, socket and AudioTrack. */
 public class SmokeTest extends Instrumentation {
     private volatile Boolean fixturePlaying;
-    private boolean stability;
+    private boolean stability,noFlac;
     private String selectedQuality;
     private int expectedReserve;
     private final BroadcastReceiver fixtureState=new BroadcastReceiver() {
@@ -39,8 +39,10 @@ public class SmokeTest extends Instrumentation {
         return field.getInt(service);
     }
     private boolean recovered(int minimumReserve) throws Exception {
-        return AudioService.connected && ("lossless".equals(selectedQuality) ? AudioService.details.startsWith("PCM") : AudioService.details.contains("160 kbps")) && reserve()>=minimumReserve;
+        boolean codecMatches="AAC".equals(expectedCodec()) ? AudioService.details.startsWith("AAC")&&AudioService.details.contains("160 kbps") : AudioService.details.startsWith(expectedCodec());
+        return AudioService.connected && codecMatches && reserve()>=minimumReserve;
     }
+    private String expectedCodec() { return "lossless".equals(selectedQuality)||("flac".equals(selectedQuality)&&noFlac) ? "PCM" : "flac".equals(selectedQuality) ? "FLAC" : "AAC"; }
     private void assertMixer() throws Exception {
         String dump;
         try(ParcelFileDescriptor fd=getUiAutomation().executeShellCommand("dumpsys audio"); FileInputStream in=new FileInputStream(fd.getFileDescriptor()); ByteArrayOutputStream out=new ByteArrayOutputStream()) {
@@ -62,7 +64,7 @@ public class SmokeTest extends Instrumentation {
         Thread.sleep(1000);
     }
     @Override public void onCreate(Bundle args) {
-        super.onCreate(args); stability="true".equals(args.getString("stability")); selectedQuality=args.getString("quality","balanced");
+        super.onCreate(args); stability="true".equals(args.getString("stability")); noFlac="true".equals(args.getString("noFlac")); selectedQuality=args.getString("quality","balanced");
         int macReserve=Integer.parseInt(args.getString("reserve","500"));
         expectedReserve=Math.max(Math.max(250,Math.min(1000,macReserve)),"stable".equals(selectedQuality) ? 750 : 250);
         start();
@@ -80,7 +82,10 @@ public class SmokeTest extends Instrumentation {
             if(Build.VERSION.SDK_INT>=33) getTargetContext().registerReceiver(fixtureState,new IntentFilter("app.unisono.TEST_PLAYER_STATE"),Context.RECEIVER_EXPORTED);
             else getTargetContext().registerReceiver(fixtureState,new IntentFilter("app.unisono.TEST_PLAYER_STATE"));
             getTargetContext().getSharedPreferences("playback",Context.MODE_PRIVATE).edit().putBoolean("mixWithOtherApps",true).putString("quality",selectedQuality).commit();
-            if(!stability) AacRoundTrip.run("unisono://10.0.2.2:45871#11111111111111111111111111111111");
+            if(!stability) {
+                if("flac".equals(selectedQuality)&&!noFlac) FlacRoundTrip.run("unisono://10.0.2.2:45871#11111111111111111111111111111111");
+                else AacRoundTrip.run("unisono://10.0.2.2:45871#11111111111111111111111111111111");
+            }
             Intent intent=new Intent(Intent.ACTION_VIEW,android.net.Uri.parse("unisono://10.0.2.2:45871#11111111111111111111111111111111"),getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             Activity a=startActivitySync(intent); waitForIdleSync(); Thread.sleep(1000); save(a,"android-idle.png");
             runOnMainSync(()-> { View b=find(a.getWindow().getDecorView(),"Conectar"); if(b==null) throw new AssertionError("Connect button missing"); b.performClick(); });
@@ -95,7 +100,7 @@ public class SmokeTest extends Instrumentation {
                 getTargetContext().stopService(new Intent(getTargetContext(),AudioService.class));
                 result.putString("stream","PASS: audio playback recovery from an 850 ms network stall; "+AudioService.details); finish(Activity.RESULT_OK,result);return;
             }
-            advancing(); if(!AudioService.details.startsWith("lossless".equals(selectedQuality) ? "PCM" : "AAC")) throw new AssertionError("Wrong codec selected"); save(a,"android-connected.png");
+            advancing(); if(!AudioService.details.startsWith(expectedCodec())) throw new AssertionError("Wrong codec selected; expected "+expectedCodec()+": "+AudioService.details); save(a,"android-connected.png");
             fixture("silent",false); advancing();
             fixture("play",true); advancing();
             if(a.hasWindowFocus()) throw new AssertionError("Receiver Activity did not enter background");
@@ -120,7 +125,7 @@ public class SmokeTest extends Instrumentation {
             fixture("silent",false);
             getTargetContext().getSharedPreferences("playback",Context.MODE_PRIVATE).edit().putBoolean("mixWithOtherApps",true).commit();
             getTargetContext().unregisterReceiver(fixtureState);
-            result.putString("stream","PASS: audio playback with AAC round-trip validation, background Activity, mixing in both start orders with a separate-UID media player, normal-mode focus loss, explicit disconnect."); finish(Activity.RESULT_OK,result);
+            result.putString("stream","PASS: audio playback with "+("flac".equals(selectedQuality)&&!noFlac ? "FLAC exact 24-bit round-trip" : "AAC round-trip")+" validation, actual codec "+expectedCodec()+", background Activity, mixing in both start orders with a separate-UID media player, normal-mode focus loss, explicit disconnect."); finish(Activity.RESULT_OK,result);
         } catch(Throwable e) { result.putString("stream","FAIL: "+e.toString()+"; "+AudioService.status); finish(Activity.RESULT_CANCELED,result); }
     }
 }

@@ -4,13 +4,15 @@
 
 Stream your Mac's system audio to Android over your local network, and listen on both devices at once.
 
-Unísono is a native macOS menu-bar app with a companion Android receiver. It offers adaptive AAC streaming and a lossless PCM mode, encrypts the connection, and lets you adjust the shared playback reserve to balance delay and continuity.
+Unísono is a native macOS menu-bar app with a companion Android receiver. It offers adaptive AAC, FLAC compression of 24-bit PCM, and uncompressed Float32 PCM streaming. It encrypts the connection and lets you adjust the shared playback reserve to balance delay and continuity.
 
-**Status: experimental personal-use prototype, version 0.2.3.** A custom 250 ms AAC reserve has been checked in the Android emulator and a short physical S25 Ultra session. Acoustic synchronization, elimination of popping, and long-running stability still need verification.
+**Status: experimental personal-use prototype, version 0.2.4 (build 7).** Exact 24-bit FLAC transport and playback have been checked in the Android emulator. Physical S25 FLAC, acoustic synchronization, elimination of popping, and long-running stability still need verification.
 
-[Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.3) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
+[Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.4) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
 
-Version 0.2.3 adds a custom shared reserve of 250–1000 ms in Mac settings, retaining the 500 ms default. Balanced AAC and PCM now honor a 250 ms setting; the stable AAC profile retains a 750 ms minimum. The separate Mac synchronization offset rejects values outside ±100 ms instead of silently clamping them, and Android labels its independent output buffer explicitly.
+Version 0.2.4 adds **Sin pérdida · FLAC 24 bits**, using native Mac encoding and Android decoding. Captured Float32 samples are first converted to signed 24-bit PCM; FLAC preserves those converted integers exactly. **Sin compresión · PCM Float32** remains available to preserve the original captured samples in transport. FLAC falls back to PCM when unavailable and never switches to AAC during recovery.
+
+Version 0.2.3 added a custom shared reserve of 250–1000 ms in Mac settings, retaining the 500 ms default. It allowed balanced AAC and PCM to honor a 250 ms setting while stable AAC retained a 750 ms minimum. It also separated the Mac synchronization offset, rejected values outside ±100 ms instead of silently clamping them, and labeled Android's independent output buffer explicitly. FLAC uses the same reserve policy.
 
 Version 0.2.2 introduced the approved mint U and sound-wave icon: a Mac app icon and native menu-bar template, plus Android adaptive, themed, and notification icons. That release kept the audio behavior of 0.2.1.
 
@@ -21,7 +23,7 @@ Version 0.2.2 introduced the approved mint U and sound-wave icon: a Mac app icon
 ## What it does
 
 - Captures system audio with Core Audio Taps, excluding Unísono's own playback.
-- Sends AAC-LC at a 256 or 160 kbps target, or uncompressed stereo Float32 PCM, over encrypted TCP.
+- Sends AAC-LC at a 256 or 160 kbps target, variable-bitrate FLAC of 24-bit PCM, or uncompressed stereo Float32 PCM, over encrypted TCP.
 - Authenticates pairing with a random key and encrypts packets with AES-256-GCM.
 - Plays locally on the Mac and remotely on Android, or only on Android.
 - Offers a configurable 250–1000 ms shared playback reserve, adaptive Android output buffering, and a separate manual Mac synchronization offset.
@@ -42,11 +44,11 @@ The currently tested environments are a Mac mini M4 running macOS 26.6.1 and an 
 
 ## Try it
 
-1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.3).
+1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.2.4).
 2. Extract and open the Mac app. Install the APK on Android using your device's normal sideloading flow.
 3. Open Unísono's menu-bar icon, then the gear. Scan its QR with the phone camera, or copy the entire connection link into the Android app.
 4. Tap **Conectar** on Android and grant the Mac's audio-capture permission when prompted. Play audio on the Mac. Reconnect once if the first permission prompt interrupted pairing.
-5. Start with **Equilibrado · AAC adaptable** on Android. Choose **Más estable · AAC 160 kbps** for a larger starting reserve or **Sin pérdida · PCM** for lossless transport. Disconnect to change the mode.
+5. Start with **Equilibrado · AAC adaptable** on Android. Choose **Más estable · AAC 160 kbps** for a larger starting reserve, **Sin pérdida · FLAC 24 bits** for compression after conversion to 24-bit PCM, or **Sin compresión · PCM Float32** to preserve the captured samples exactly in transport. Disconnect to change the mode.
 6. To customize the reserve, enter a whole number from **250 to 1000** under **Reserva de audio** in Mac settings, select **Aplicar y reconectar**, then reconnect on Android. The default is 500 ms. The stable AAC profile can raise a smaller Mac setting to its 750 ms minimum.
 
 The apps currently use a Spanish interface. Closing the Mac panel leaves streaming active. **Detener transmisión** ends the session and restores normal Mac playback; **Salir de Unísono** quits the app.
@@ -75,17 +77,22 @@ The Android service exposes bounded state via `adb shell dumpsys activity servic
 |---|---|---|
 | Equilibrado · AAC adaptable (default) | AAC-LC, 256 kbps target; 160 kbps on recovery | 500 ms default; configurable from 250 ms |
 | Más estable · AAC 160 kbps | AAC-LC, 160 kbps target | At least 750 ms; follows a larger Mac setting |
-| Sin pérdida · PCM | Original Float32 PCM; never automatically switches to AAC | 500 ms default; configurable from 250 ms |
+| Sin pérdida · FLAC 24 bits | FLAC preserves the converted signed 24-bit PCM; PCM fallback, never AAC | 500 ms default; configurable from 250 ms |
+| Sin compresión · PCM Float32 | Original captured Float32 PCM; never automatically switches to AAC | 500 ms default; configurable from 250 ms |
 
 **AAC is lossy.** Its lower network usage is a deliberate quality/stability tradeoff. The Android status and Mac panel show the actual codec, bitrate target where applicable, and shared reserve. AAC uses native Mac encoding and Android decoding at 48 kHz, with encoder priming removed before scheduling playback. Unavailable AAC initialization falls back to PCM, which is reported in the status. Legacy receivers request PCM; legacy Mac builds respond with PCM. Update both apps to use all adaptation features.
 
+FLAC retains the captured sample rate and sends 1024-frame blocks without encoder priming. At 48 kHz, each block represents about 21.3 ms of source audio. Its bitrate varies with the content; there is no fixed bitrate target or guaranteed compression ratio. It does not lower Android's output-buffer requirement. If native FLAC cannot initialize, decode correctly, or produce a supported output precision, the session uses PCM Float32 instead. An older Mac that does not recognize FLAC also responds with PCM. The Android status reports the actual transport and marks PCM as an alternative when FLAC was selected.
+
 Android now fills approximately 100 ms of output audio before playback, coalesces small PCM packets, increases its output buffer after underruns toward 250 ms (subject to device limits), smooths startup/volume changes over 10 ms, and filters clock corrections instead of adjusting aggressively every half-second. Corrections change at most every two seconds, with a 3 ms deadband and a 200 ppm step limit.
 
-After a failed session or repeated underruns, the receiver reconnects with 250 ms added to the actual negotiated reserve, capped at 1000 ms: a 250 ms session can recover at 500 ms, then 750 ms. The Mac uses the larger of its configured reserve and the receiver's request, so both restart on the same timeline. Balanced AAC and PCM initially request a 250 ms minimum; stable AAC requests 750 ms. This introduces a brief pause; it is not seamless bitrate switching. Automatic reductions in quality only occur within an AAC mode. There are at most three connection attempts per start, and a fresh manual start resets recovery state before negotiating from the selected profile and saved Mac setting. Older receivers' larger requests remain respected; update both apps to use 250 ms.
+After a failed session or repeated underruns, the receiver reconnects with 250 ms added to the actual negotiated reserve, capped at 1000 ms: a 250 ms session can recover at 500 ms, then 750 ms. The Mac uses the larger of its configured reserve and the receiver's request, so both restart on the same timeline. Balanced AAC, FLAC, and PCM initially request a 250 ms minimum; stable AAC requests 750 ms. This introduces a brief pause; it is not seamless bitrate switching. FLAC recovery retains FLAC when the codec is healthy, or falls back to PCM when decoding is unavailable; FLAC and PCM modes never recover through AAC. Automatic reductions in quality only occur within an AAC mode. There are at most three connection attempts per start, and a fresh manual start resets recovery state before negotiating from the selected profile and saved Mac setting. Older receivers' larger requests remain respected; update both apps to use 250 ms.
 
 Strong Wi-Fi signal does not establish the cause of a pop. Small buffers, scheduling stalls, clock correction, source clipping, or the output device can also contribute. These changes address several plausible software causes; eliminating the reported pops on the physical S25 Ultra is still unverified.
 
 ## Audio quality and timing
+
+FLAC uses integer PCM, while Core Audio capture supplies Float32. Unísono converts each finite captured sample deterministically: clamp to the normalized range, multiply by 8,388,608, round to the nearest integer with ties away from zero, then clamp to signed 24-bit limits. Nonfinite samples are rejected. This conversion can change the original Float32 samples; FLAC is lossless relative to the resulting 24-bit integers. It does not resample the captured stream. Android accepts float, packed 24-bit, or left-aligned 32-bit output with the required precision and rejects 16-bit output instead of silently reducing precision. PCM Float32 bypasses the 24-bit conversion and remains the exact captured-sample transport.
 
 **PCM lossless transport is not the same as bit-perfect output.** In PCM mode, transmitted samples are preserved, but the source mixer, output mixer, volume changes, device resampling and Android clock correction can alter the rendered audio. Bluetooth may add lossy encoding and additional delay.
 
@@ -145,7 +152,7 @@ Stop the Mac app first so TCP port 45871 is available. With JDK 17 configured:
 bash scripts/test.sh
 ```
 
-This checks custom-reserve parsing and negotiation, Mac offset validation, the capture ring, and Swift/Java protocol interoperability: exact PCM sample bits, authenticated encryption, clock messages, volume messages, explicit stop, reconnection and rejection of incorrect pairing keys. Fixed `1111…` and `2222…` keys in tests are public fixtures, never production pairing keys. The test server and Mac app use the same `LatencySettings` negotiation helper.
+This checks the native FLAC encoder, custom-reserve parsing and negotiation, Mac offset validation, the capture ring, and Swift/Java protocol interoperability: exact PCM sample bits, authenticated encryption, clock messages, volume messages, explicit stop, reconnection and rejection of incorrect pairing keys. Fixed `1111…` and `2222…` keys in tests are public fixtures, never production pairing keys. The test server and Mac app use the same `LatencySettings` negotiation helper.
 
 With an Android 15 emulator running and `ANDROID_HOME` configured, run `bash scripts/test-android.sh`. It builds the test APK and a separate-UID media-player fixture, validates both native AAC bitrates and priming alignment against a synthetic tone, and verifies advancing background playback, both mixing start orders, unmuted mixer state, normal-mode focus loss, and explicit disconnect. It targets the emulator and a test server at `10.0.2.2:45871`; test APKs stay under `build/` and are excluded from releases.
 
@@ -157,6 +164,16 @@ UNISONO_TEST_RESERVE=250 UNISONO_JITTER=1 bash scripts/test-android.sh
 ```
 
 The first command asserts the negotiated reserve before checking playback. The second injects an 850 ms network stall and checks recovery at a larger reserve/lower AAC bitrate. Add `UNISONO_TEST_QUALITY=lossless` to verify that recovery preserves PCM, or use `UNISONO_TEST_QUALITY=stable` to check that its 750 ms minimum overrides a 250 ms Mac setting. `scripts/test.sh` also checks adaptive-buffer bounds, profile reserve floors, recovery from 250 ms, clock-correction limits, and gain ramps in pure Java.
+
+For FLAC, using the same emulator and environment:
+
+```sh
+UNISONO_TEST_QUALITY=flac UNISONO_TEST_RESERVE=250 bash scripts/test-android.sh
+UNISONO_TEST_QUALITY=flac UNISONO_TEST_RESERVE=250 UNISONO_JITTER=1 bash scripts/test-android.sh
+UNISONO_TEST_QUALITY=flac UNISONO_TEST_RESERVE=250 UNISONO_TEST_NO_FLAC=1 bash scripts/test-android.sh
+```
+
+The first command compares 49,152 synthetic stereo frames bit for bit through the Swift FLAC encoder, encrypted wire, and native Android decoder. Its source includes silence, signed 24-bit boundaries, channel differences, pseudorandom samples, and least-significant bits; it also checks metadata, packet/timestamp continuity, and malformed-input rejection before the normal background/mixing checks. The second verifies larger-reserve recovery while retaining FLAC. The third makes the test server decline FLAC and checks PCM fallback during normal playback. These scripts target only the emulator; their test classes are excluded from release APKs.
 
 A local-only physical-device probe is included in `tests/DeviceTest.java` and test APKs. It uses the app’s saved pairing link, starts a real session, and reports connection/timing counters without audio contents or pairing credentials. It is never included in release APKs.
 
@@ -171,6 +188,12 @@ mkdir -p build/mac
 Preview mode uses synthetic connection state and does not start the network listener.
 
 ## Validation so far
+
+For v0.2.4, the Mac build and `scripts/test.sh` passed. Native FLAC checks preserved 24-bit PCM exactly at 8, 44.1, 48, 96, and 192 kHz, including short final blocks, clipping, rounding, and noisy input. Capture-ring, encrypted PCM, reserve, and playback-policy regression checks also passed.
+
+Android 15 emulator tests compared all 49,152 synthetic stereo frames bit for bit, including the least-significant bits, through the encrypted FLAC stream and native Android float output. FLAC playback negotiated a 250 ms reserve and passed background playback, mixing in both start orders, normal-mode focus loss, and explicit stop. An injected 850 ms stall recovered with FLAC retained and a 500 ms reserve. A server without FLAC support correctly selected PCM; PCM fallback and AAC both passed the background/mixing/focus/stop checks, and native AAC round-trip checks passed at both bitrate targets.
+
+The production Mac app captured and streamed 382,976 FLAC frames over approximately eight seconds at 48 kHz with a 250 ms reserve, without a sequence error or capture overflow. No captured audio was saved. Both release builds passed, and the Mac settings preview retained readable light text. The S25 was unavailable over USB during this release's tests, so physical FLAC playback remains unverified. The following v0.2.3 results are historical AAC/PCM evidence and do not establish physical FLAC support.
 
 For v0.2.3, the custom-reserve/offset unit checks and protocol suite passed. Android 15 emulator tests verified an initial AAC reserve of 250 ms, native AAC round-trip checks, background playback, mixing in both start orders, and normal-mode focus loss. An injected 850 ms stall recovered to AAC at 160 kbps with a 500 ms reserve and a 100 ms output buffer. The Mac settings preview also confirmed the 250 ms field and readable light text.
 

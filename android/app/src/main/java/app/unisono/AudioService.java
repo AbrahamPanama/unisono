@@ -41,6 +41,9 @@ public class AudioService extends Service {
     private final Handler main=new Handler(Looper.getMainLooper());
     private ArrayBlockingQueue<Chunk> queue;
     private static class Chunk { long pts,index; int frames; float[] samples; }
+    private static final class PlaybackQueueException extends IOException {
+        PlaybackQueueException() { super("La reproducción se atrasó"); }
+    }
     @Override public void onCreate() {
         super.onCreate(); instance=this;
         NotificationManager nm=getSystemService(NotificationManager.class); nm.createNotificationChannel(new NotificationChannel("audio","Audio compartido",NotificationManager.IMPORTANCE_LOW));
@@ -74,32 +77,39 @@ public class AudioService extends Service {
     private void runConnection(String link) {
         int retries=0;
         while(running && retries<3) {
-            Thread audio=null; AacDecoder decoder=null;
+            Thread audio=null; AacDecoder decoder=null; FlacDecoder flac=null;
             try {
                 playbackFailure=null; status=retries==0 ? "Conectando…" : "Reconectando…"; wire=new Wire(link);
                 if(!running) break;
                 long best=Long.MAX_VALUE;
                 for(int i=0;i<8;i++) { long t0=System.nanoTime(); wire.send(3,Wire.longBytes(t0)); byte[] b=wire.read(); long t1=System.nanoTime(); if(b.length!=17||b[0]!=4) throw new IOException("Sincronización de reloj inválida"); ByteBuffer p=ByteBuffer.wrap(b); p.get(); long echo=p.getLong(),server=p.getLong(); if(echo!=t0) throw new IOException("Respuesta de reloj inválida"); if(t1-t0<best) { best=t1-t0; localMinusServer=t0+(t1-t0)/2-server; } }
-                JSONObject request=new JSONObject().put("codec",(forcePCM||"lossless".equals(quality)) ? "pcm" : "aac-lc").put("bitrate",bitrate).put("reserveMs",reserveMs);
+                JSONObject request=new JSONObject().put("codec",(forcePCM||"lossless".equals(quality)) ? "pcm" : "flac".equals(quality) ? "flac" : "aac-lc").put("bitrate",bitrate).put("reserveMs",reserveMs);
                 wire.send(5,request.toString().getBytes(StandardCharsets.UTF_8)); byte[] config=wire.read(); if(config[0]!=1) throw new IOException("No llegó el formato de audio");
                 JSONObject c=new JSONObject(new String(config,1,config.length-1,StandardCharsets.UTF_8)); rate=c.getInt("rate"); delayMs=c.getInt("delayMs");
                 wireFormat=c.getString("format"); primingFrames=c.optInt("primingFrames",0);
-                if(rate<8000||rate>192000||c.getInt("channels")!=2||(!"float32le".equals(wireFormat)&&!"aac-lc".equals(wireFormat))||delayMs<100||delayMs>1000) throw new IOException("Formato no compatible");
+                if(rate<8000||rate>192000||c.getInt("channels")!=2||(!"float32le".equals(wireFormat)&&!"aac-lc".equals(wireFormat)&&!"flac".equals(wireFormat))||delayMs<100||delayMs>1000) throw new IOException("Formato no compatible");
+                if(("lossless".equals(quality)||"flac".equals(quality))&&"aac-lc".equals(wireFormat)) throw new IOException("El modo sin pérdida no permite AAC");
                 volume=(float)c.optDouble("volume",volume); queue=new ArrayBlockingQueue<>(256); playbackFailure=null; sessionActive=true; syncMs=Double.NaN; underruns=0; outputBufferMs=100; playbackSpeed=1;
                 if("aac-lc".equals(wireFormat)) {
                     bitrate=c.getInt("bitrate");
                     try { decoder=new AacDecoder(rate,primingFrames,(pts,index,samples)-> { Chunk chunk=new Chunk(); chunk.pts=pts; chunk.index=index; chunk.frames=samples.length/2; chunk.samples=samples; enqueue(chunk); }); }
                     catch(Exception e) { forcePCM=true; throw new IOException("AAC no disponible; probando PCM",e); }
+                } else if("flac".equals(wireFormat)) {
+                    try {
+                        if(c.getInt("bitDepth")!=24) throw new IOException("FLAC requiere 24 bits");
+                        byte[] info=android.util.Base64.decode(c.getString("streamInfo"),android.util.Base64.DEFAULT);
+                        flac=new FlacDecoder(rate,info,(pts,index,samples)-> { Chunk chunk=new Chunk(); chunk.pts=pts; chunk.index=index; chunk.frames=samples.length/2; chunk.samples=samples; enqueue(chunk); });
+                    } catch(Exception e) { forcePCM=true; throw new IOException("FLAC de 24 bits no disponible; probando PCM",e); }
                 }
                 receivedBytes=0;receivedSince=System.nanoTime();
                 audio=new Thread(()->playAudio(),"Unisono-playback"); audio.start();
                 connected=true; connecting=false; status="Escuchando tu Mac"; updateDetails();
-                main.post(()->getSystemService(NotificationManager.class).notify(1,notification("Escuchando tu Mac · "+("aac-lc".equals(wireFormat) ? "AAC" : "PCM sin pérdida"))));
+                main.post(()->getSystemService(NotificationManager.class).notify(1,notification("Escuchando tu Mac · "+codecLabel())));
                 long report=0, expected=0,pcmIndex=0,pcmOrigin=-1;
                 float[] pcmPending=new float[2048]; int pcmFill=0;
                 while(running && playbackFailure==null) {
                     byte[] b=wire.read(); receivedBytes+=b.length; int type=b[0]&255;
-                    if(type==2 && decoder==null) {
+                    if(type==2 && decoder==null && flac==null) {
                         if(b.length<21) throw new IOException("Cabecera de audio incompleta"); ByteBuffer p=ByteBuffer.wrap(b).order(ByteOrder.BIG_ENDIAN); p.get(); Chunk chunk=new Chunk(); chunk.pts=p.getLong(); chunk.index=p.getLong(); chunk.frames=p.getInt();
                         if(chunk.frames<=0||chunk.frames>4096||b.length!=21+chunk.frames*8||chunk.index!=expected) throw new IOException("Secuencia PCM no válida"); expected+=chunk.frames;
                         if(pcmOrigin<0) pcmOrigin=chunk.pts;
@@ -118,7 +128,15 @@ public class AudioService extends Service {
                         ByteBuffer header=ByteBuffer.wrap(b).order(ByteOrder.BIG_ENDIAN); header.get(); long pts=header.getLong(),index=header.getLong(); int frames=header.getInt();
                         if(index!=expected||frames!=1024) throw new IOException("Secuencia AAC no válida");expected+=frames;
                         decoder.packet(pts,index,java.util.Arrays.copyOfRange(b,21,b.length));
-                    } else if(type==2||type==10) { throw new IOException("El códec no coincide con el formato anunciado");
+                    } else if(type==11 && flac!=null) {
+                        if(b.length<=21||b.length>65507) throw new IOException("Paquete FLAC no válido");
+                        ByteBuffer header=ByteBuffer.wrap(b).order(ByteOrder.BIG_ENDIAN); header.get(); long pts=header.getLong(),index=header.getLong(); int frames=header.getInt();
+                        if(index!=expected||frames<=0||frames>8192) throw new IOException("Secuencia FLAC no válida"); expected+=frames;
+                        try { flac.packet(pts,index,frames,java.util.Arrays.copyOfRange(b,21,b.length)); }
+                        // Playback backpressure does not make FLAC unavailable. Retry it with more reserve.
+                        catch(PlaybackQueueException | InterruptedException e) { throw e; }
+                        catch(Exception e) { forcePCM=true; throw new IOException("No se pudo decodificar FLAC de 24 bits; probando PCM",e); }
+                    } else if(type==2||type==10||type==11) { throw new IOException("El códec no coincide con el formato anunciado");
                     } else if(type==7) { running=false; status=new String(b,1,b.length-1,StandardCharsets.UTF_8); main.post(this::stopSelf); break; }
                     else if(type==6 && b.length==5) { volume=Math.max(0,Math.min(1,ByteBuffer.wrap(b,1,4).getFloat()));  }
                     long now=System.nanoTime();
@@ -136,18 +154,23 @@ public class AudioService extends Service {
                     android.util.Log.w("UnisonoAudio","Recovery: "+reason+"; underruns="+underruns+"; syncMs="+syncMs);
                     retries++;
                     reserveMs=PlaybackTuning.nextReserve(Math.max(reserveMs,delayMs));
-                    if(!"lossless".equals(quality)) bitrate=160000;
+                    if(!"lossless".equals(quality)&&!"flac".equals(quality)) bitrate=160000;
                 } }
-            finally { if(decoder!=null) decoder.close(); sessionActive=false; connected=false; Wire w=wire; wire=null; if(w!=null) w.close(); if(audio!=null) { audio.interrupt(); try { audio.join(1500); } catch(InterruptedException ignored) {} } }
+            finally { if(decoder!=null) decoder.close(); if(flac!=null) flac.close(); sessionActive=false; connected=false; Wire w=wire; wire=null; if(w!=null) w.close(); if(audio!=null) { audio.interrupt(); try { audio.join(1500); } catch(InterruptedException ignored) {} } }
             if(running && retries<3) { connecting=true; try { Thread.sleep(1000); } catch(InterruptedException ignored) {} }
         }
         connecting=false; if(running) main.post(this::stopSelf);
     }
     private void enqueue(Chunk chunk) throws Exception {
-        if(!queue.offer(chunk,100,TimeUnit.MILLISECONDS)) throw new IOException("La reproducción se atrasó");
+        if(!queue.offer(chunk,100,TimeUnit.MILLISECONDS)) throw new PlaybackQueueException();
+    }
+    private String codecLabel() {
+        if("flac".equals(wireFormat)) return "FLAC · 24 bits · "+rate+" Hz";
+        if("aac-lc".equals(wireFormat)) return "AAC · "+bitrate/1000+" kbps";
+        return "PCM Float32 · "+rate+" Hz"+("flac".equals(quality) ? " · Alternativa a FLAC" : "");
     }
     private void updateDetails() {
-        details=("aac-lc".equals(wireFormat) ? "AAC · "+bitrate/1000+" kbps" : "PCM sin pérdida · "+rate+" Hz")+" · Reserva "+delayMs+" ms · Búfer de salida "+outputBufferMs+" ms";
+        details=codecLabel()+" · Reserva "+delayMs+" ms · Búfer de salida "+outputBufferMs+" ms";
     }
     private void playAudio() {
         android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_AUDIO); AudioTrack t=null;

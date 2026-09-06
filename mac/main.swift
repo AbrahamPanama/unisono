@@ -40,6 +40,7 @@ final class App:NSObject,NSApplicationDelegate {
     var item:NSStatusItem!, pop=NSPopover(), settings:NSWindow?
     let capture=Capture()
     var encoder:AACEncoder?
+    var flacEncoder:FLACEncoder?
     var server:LinkServer!
     var stateLabel:NSTextField!, deviceLabel:NSTextField!, qualityLabel:NSTextField!, detailLabel:NSTextField!, mainButton:NSButton!, volume:NSSlider!
     var linkField:NSTextField!, delayField:NSTextField!, trimField:NSTextField!, localSwitch:NSButton!, settingsFeedback:NSTextField!
@@ -76,7 +77,8 @@ final class App:NSObject,NSApplicationDelegate {
         capture.onPacket={ [weak self] p in
             guard let self=self else { return }
             do {
-                if let encoder=self.encoder { for packet in try encoder.encode(p) { if !self.server.ready { break }; self.server.send(10,packet) } }
+                if let flac=self.flacEncoder { for packet in try flac.encode(p) { if !self.server.ready { break }; self.server.send(11,packet) } }
+                else if let encoder=self.encoder { for packet in try encoder.encode(p) { if !self.server.ready { break }; self.server.send(10,packet) } }
                 else { self.server.send(2,p) }
             } catch { self.server.disconnect("No se pudo codificar el audio. Prueba PCM sin pérdida.") }
         }
@@ -125,20 +127,23 @@ final class App:NSObject,NSApplicationDelegate {
         do {
             let request=(try? JSONSerialization.jsonObject(with:server.captureRequest)) as? [String:Any] ?? [:]
             let wantsAAC=(request["codec"] as? String)=="aac-lc"
+            let wantsFLAC=(request["codec"] as? String)=="flac"
             let reserveMs=LatencySettings.negotiate(macMilliseconds:reserveMilliseconds,receiverMilliseconds:request["reserveMs"] as? Int)
             let reserve=Double(reserveMs)/1000
             try capture.start(delay:reserve,trim:trim,local:local)
             encoder=wantsAAC ? try? AACEncoder(sourceRate:capture.rate,bitRate:(request["bitrate"] as? Int)==160000 ? 160000 : 256000) : nil
-            var config:[String:Any]=["rate":encoder?.rate ?? Int(capture.rate),"channels":2,"format":encoder==nil ? "float32le" : "aac-lc","delayMs":reserveMs,"version":1,"volume":volume.doubleValue]
+            flacEncoder=wantsFLAC ? try? FLACEncoder(sourceRate:capture.rate) : nil
+            var config:[String:Any]=["rate":flacEncoder?.rate ?? encoder?.rate ?? Int(capture.rate),"channels":2,"format":flacEncoder != nil ? "flac" : encoder==nil ? "float32le" : "aac-lc","delayMs":reserveMs,"version":1,"volume":volume.doubleValue]
             if let encoder=encoder { config["bitrate"]=encoder.bitRate; config["primingFrames"]=encoder.primingFrames }
-            let quality=encoder.map { "AAC · \($0.bitRate/1000) kbps" } ?? "PCM sin compresión"
+            if let flac=flacEncoder { config["bitDepth"]=flac.bitDepth; config["streamInfo"]=flac.streamInfo.base64EncodedString() }
+            let quality=flacEncoder != nil ? "FLAC · 24 bits" : encoder.map { "AAC · \($0.bitRate/1000) kbps" } ?? "PCM sin compresión"
             server.send(1,try JSONSerialization.data(withJSONObject:config)); streaming=true; lastHeartbeat=clockNS()
             stateLabel.stringValue="●  Transmitiendo"; deviceLabel.stringValue="Mac +\nGalaxy S25 Ultra"; mainButton.title="Detener transmisión"; tintTitle(mainButton,buttonInk); volume.isEnabled=true
             qualityLabel.stringValue="\(quality) · \(reserveMs) ms de reserva"
         } catch { server.disconnect(error.localizedDescription); stopAudio(message:error.localizedDescription) }
     }
     func stopAudio(message:String) {
-        capture.stop(); encoder=nil; streaming=false; stateLabel.stringValue="●  Listo para conectar"; mainButton.title="Conectar celular"; tintTitle(mainButton,buttonInk); volume.isEnabled=false; deviceLabel.stringValue="Mac +\nTu Android"; qualityLabel.stringValue="Calidad adaptable · Lista para conectar"
+        capture.stop(); encoder=nil; flacEncoder=nil; streaming=false; stateLabel.stringValue="●  Listo para conectar"; mainButton.title="Conectar celular"; tintTitle(mainButton,buttonInk); volume.isEnabled=false; deviceLabel.stringValue="Mac +\nTu Android"; qualityLabel.stringValue="Calidad adaptable · Lista para conectar"
         detailLabel.stringValue=message
         if !message.isEmpty && message != "Listo para conectar" { stateLabel.stringValue="●  Conexión detenida"; item.button?.toolTip="Unísono: "+message }
     }
@@ -155,7 +160,7 @@ final class App:NSObject,NSApplicationDelegate {
             qrView=NSImageView(frame:NSRect(x:160,y:201,width:140,height:140)); qrView.imageScaling = .scaleProportionallyUpOrDown; v.addSubview(qrView)
             put(label("Reserva de audio · 250–1000 ms",14,.medium),353,24)
             delayField=NSTextField(string:String(reserveMilliseconds)); delayField.textColor=ink; delayField.backgroundColor=NSColor(white:0.16,alpha:1); delayField.target=self; delayField.action=#selector(saveSettings); delayField.setAccessibilityLabel("Reserva de audio en milisegundos"); put(delayField,382,28)
-            put(label("AAC equilibrado y PCM: desde 250 ms. Más estable: mínimo 750 ms. Puede aumentar tras cortes.",12,.regular,muted),420,36)
+            put(label("AAC equilibrado, FLAC y PCM: desde 250 ms. Más estable: 750 ms. Puede aumentar tras cortes.",12,.regular,muted),420,36)
             localSwitch=NSButton(checkboxWithTitle:"Escuchar también en la Mac",target:self,action:#selector(saveSettings)); tintTitle(localSwitch); localSwitch.state=local ? .on : .off; put(localSwitch,470,25)
             put(label("Sincronización de la Mac · −100 a +100 ms",14,.medium),509,24)
             trimField=NSTextField(string:String(format:"%g",trim*1000)); trimField.textColor=ink; trimField.backgroundColor=NSColor(white:0.16,alpha:1); trimField.target=self; trimField.action=#selector(saveSettings); trimField.setAccessibilityLabel("Ajuste de sincronización de la Mac en milisegundos"); put(trimField,538,28)

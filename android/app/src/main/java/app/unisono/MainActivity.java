@@ -17,7 +17,7 @@ public class MainActivity extends Activity {
     private Button connect;
     private CheckBox mix;
     private Spinner quality;
-    private final String[] qualityIds={"balanced","stable","lossless"};
+    private final String[] qualityIds={"balanced","stable","flac","lossless"};
     private SeekBar volume;
     private LinearLayout pairing,audioControls;
     private final Handler handler=new Handler(Looper.getMainLooper());
@@ -49,19 +49,19 @@ public class MainActivity extends Activity {
         connect=new Button(this); connect.setText("Conectar"); connect.setAllCaps(false); connect.setTextSize(18); connect.setTextColor(Color.rgb(12,27,18)); GradientDrawable bg=new GradientDrawable(); bg.setColor(green); bg.setCornerRadius(dp(12)); connect.setBackground(bg); root.addView(connect,new LinearLayout.LayoutParams(-1,dp(54))); connect.setOnClickListener(v->toggle());
         gap(root,16); root.addView(text("Calidad y estabilidad",15,Color.WHITE,true));
         quality=new Spinner(this);
-        ArrayAdapter<String> choices=new ArrayAdapter<String>(this,android.R.layout.simple_spinner_item,new String[]{"Equilibrado · AAC adaptable","Más estable · AAC 160 kbps","Sin pérdida · PCM"}) {
+        ArrayAdapter<String> choices=new ArrayAdapter<String>(this,android.R.layout.simple_spinner_item,new String[]{"Equilibrado · AAC adaptable","Más estable · AAC 160 kbps","Sin pérdida · FLAC 24 bits","Sin compresión · PCM Float32"}) {
             @Override public View getView(int p,View v,ViewGroup parent) { TextView t=(TextView)super.getView(p,v,parent);t.setTextColor(Color.WHITE);t.setTextSize(15);return t; }
             @Override public View getDropDownView(int p,View v,ViewGroup parent) { TextView t=(TextView)super.getDropDownView(p,v,parent);t.setTextColor(Color.WHITE);t.setBackgroundColor(Color.rgb(35,39,38));return t; }
         };
         choices.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item); quality.setAdapter(choices);
         String selected=getSharedPreferences("playback",MODE_PRIVATE).getString("quality","balanced");
-        quality.setSelection("stable".equals(selected) ? 1 : "lossless".equals(selected) ? 2 : 0);
+        quality.setSelection("stable".equals(selected) ? 1 : "flac".equals(selected) ? 2 : "lossless".equals(selected) ? 3 : 0);
         quality.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             public void onNothingSelected(AdapterView<?> a) {}
             public void onItemSelected(AdapterView<?> a,View v,int p,long id) { getSharedPreferences("playback",MODE_PRIVATE).edit().putString("quality",qualityIds[p]).apply(); }
         });
         root.addView(quality,new LinearLayout.LayoutParams(-1,dp(48)));
-        root.addView(text("Configura la reserva en la Mac: desde 250 ms en Equilibrado o PCM; Más estable pide 750 ms. Puede aumentar tras cortes. AAC tiene pérdida.",13,gray,false));
+        root.addView(text("FLAC conserva el audio convertido a 24 bits; PCM Float32 conserva las muestras capturadas. AAC tiene pérdida. Reserva desde 250 ms; Más estable pide 750 ms.",13,gray,false));
         gap(root,12);
         mix=new CheckBox(this); mix.setText("Mezclar con otras apps"); mix.setTextColor(Color.WHITE); mix.setTextSize(15); mix.setButtonTintList(android.content.res.ColorStateList.valueOf(green));
         mix.setChecked(getSharedPreferences("playback",MODE_PRIVATE).getBoolean("mixWithOtherApps",true));
