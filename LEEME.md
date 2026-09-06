@@ -1,4 +1,4 @@
-# Unísono 0.1 · Versión de prueba personal
+# Unísono 0.1.1 · Versión de prueba personal
 
 Audio de tu Mac a Android por la red local, con reproducción simultánea y transmisión PCM cifrada. App nativa de barra de menú para Apple Silicon; receptor nativo Android 8 o posterior. Preparada para probar con Mac mini M4 y Galaxy S25 Ultra.
 
@@ -22,7 +22,9 @@ El QR y el enlace contienen una clave privada de escucha. **Revocar clave y crea
 - Perfiles de reserva: **120 ms**, **250 ms (inicial)** y **500 ms**. La reserva no equivale a la latencia total medida; se suma el comportamiento de la salida de audio y la red.
 - **Ajuste de la Mac**: valores positivos retrasan la Mac respecto al celular; valores negativos la adelantan. Cambiar ajustes termina la sesión para que puedas reconectar con los nuevos valores.
 - La app intenta reconectar hasta tres veces ante un fallo de red. Una detención explícita desde la Mac no activa esta reconexión.
-- Android mantiene una notificación para escuchar con la app en segundo plano. Una llamada u otra app que reclame el audio puede detener la sesión; vuelve a conectar después.
+- Android mantiene una notificación para seguir escuchando al abrir otras apps.
+- **Mezclar con otras apps**, activado inicialmente, permite escuchar Unísono junto a Spotify u otro reproductor. Desconecta para cambiarlo. Al desactivarlo, Unísono solicita el foco de audio y se detiene cuando otra app lo reclama.
+- Si Android indica modo de llamada, timbre o comunicación, Unísono detiene la sesión; vuelve a conectar después. Las apps de llamadas que no informen ese modo pueden no detectarse. La mezcla con Spotify en el S25 físico todavía requiere prueba.
 
 ## Calidad y sincronización: alcance real
 
@@ -39,8 +41,8 @@ Ambos extremos comparten marcas de tiempo mediante un intercambio de reloj. La M
 - Prueba de interoperabilidad Swift/Java: cifrado AES-GCM, 8192 cuadros estéreo comparados bit a bit, mensajes de reloj, volumen, reconexión y rechazo de clave incorrecta.
 - Pruebas del búfer de captura: FIFO, PCM intercalado y planar, cola vacía y desbordamiento acotado.
 - Captura real en esta Mac: 719360 cuadros en unos 15 segundos, con señal no nula. Solo se conservaron estadísticas; no se guardó el audio.
-- Prueba instrumentada en emulador Android 15: importar enlace, conectar al servidor Mac, reproducir seis segundos con AudioTrack y servicio en primer plano, y desconectar.
-- Revisión visual de vistas nativas Mac y pantallas renderizadas de Android. Texto claro sobre fondo oscuro; el texto oscuro está reservado al botón verde claro.
+- Prueba instrumentada en emulador Android 15: reproducción cifrada en segundo plano, mezcla con otra app de música en ambos órdenes de inicio, dos pistas activas sin silenciamiento en el mezclador, detención al perder foco con la mezcla desactivada y desconexión explícita.
+- Revisión visual de vistas nativas Mac y pantallas renderizadas de Android. Capturas del popover real idénticas con apariencia anfitriona clara y oscura. Texto claro sobre fondo oscuro; el texto oscuro está reservado al botón verde claro.
 
 **Pendiente:** instalación y prueba en el S25 Ultra físico, medición acústica de sincronización/latencia, pruebas largas y comprobación con tus audífonos o altavoces. El emulador no representa el rendimiento del S25 ni de tu Wi-Fi. Esta es una primera versión funcional para pruebas, no una versión comercial certificada.
 
@@ -61,5 +63,7 @@ Para Mac: `bash scripts/build-mac.sh`. Requiere las Command Line Tools de Apple 
 Para Android: define `JAVA_HOME` con JDK 17 y `ANDROID_HOME` con un SDK que contenga `platforms;android-35` y `build-tools;35.0.0`, y ejecuta `bash scripts/build-android.sh`. No requiere Android Studio ni Gradle. Conserva `build/development.p12` para que las siguientes compilaciones puedan actualizar la instalación personal existente.
 
 Para las pruebas de protocolo: detén Unísono para liberar el puerto 45871, define `JAVA_HOME` y ejecuta `bash scripts/test.sh`.
+
+Para las pruebas de reproducción, con un emulador Android 15 iniciado, ejecuta `bash scripts/test-android.sh`. Instala las apps de prueba únicamente en el emulador.
 
 Configura las rutas de Java y del SDK según tu entorno. La app de Mac está firmada ad hoc y no está notarizada para distribución pública. Los instaladores se encuentran en la sección Releases del repositorio.

@@ -4,9 +4,9 @@ Stream your Mac's system audio to Android over your local network, and listen on
 
 Unísono is a native macOS menu-bar app with a companion Android receiver. It transports uncompressed stereo PCM, encrypts the connection, and uses a configurable playback buffer to prioritize continuity and synchronization.
 
-**Status: experimental personal-use prototype, version 0.1.0.** macOS capture and Android emulator playback have been tested. Physical Galaxy S25 Ultra playback, acoustic synchronization, and long-running stability still need verification.
+**Status: experimental personal-use prototype, version 0.1.1.** macOS capture and Android emulator playback have been tested. Physical Galaxy S25 Ultra playback, acoustic synchronization, and long-running stability still need verification.
 
-[Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.1.0) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
+[Download the prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.1.1) · [Guía en español](LEEME.md) · [Wire protocol](PROTOCOL.md)
 
 <img src="design/mac-preview.png" width="360" alt="Unísono's dark macOS panel with light text, green controls, phone volume and a stop button">
 
@@ -21,6 +21,7 @@ Unísono is a native macOS menu-bar app with a companion Android receiver. It tr
 - Offers 120, 250 and 500 ms playback reserves and a manual Mac timing adjustment.
 - Imports a pairing link or QR through the Android camera's link handler.
 - Supports phone-volume control and Android background playback with a foreground-service notification.
+- Offers **Mezclar con otras apps**, enabled by default, to listen alongside another music app.
 - Attempts up to three reconnections after a connection failure; intentional stops do not automatically reconnect.
 
 ## Requirements
@@ -35,7 +36,7 @@ The currently tested environments are a Mac mini M4 running macOS 26.6.1 and an 
 
 ## Try it
 
-1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.1.0).
+1. Download `Unisono-Mac.zip` and `Unisono-Android.apk` from the [prerelease](https://github.com/AbrahamPanama/unisono/releases/tag/v0.1.1).
 2. Extract and open the Mac app. Install the APK on Android using your device's normal sideloading flow.
 3. Open Unísono's menu-bar icon, then the gear. Scan its QR with the phone camera, or copy the entire connection link into the Android app.
 4. Tap **Conectar** on Android and grant the Mac's audio-capture permission when prompted. Play audio on the Mac. Reconnect once if the first permission prompt interrupted pairing.
@@ -44,6 +45,14 @@ The currently tested environments are a Mac mini M4 running macOS 26.6.1 and an 
 The apps currently use a Spanish interface. Closing the Mac panel leaves streaming active. **Detener transmisión** ends the session and restores normal Mac playback; **Salir de Unísono** quits the app.
 
 These are development builds: the Mac app is ad-hoc signed and not notarized for public distribution, and the Android APK uses a development signing identity. A locally rebuilt Android APK uses a different identity unless you preserve its generated keystore, so it cannot update an existing differently signed install directly.
+
+## Background playback and other music apps
+
+Opening another app leaves the foreground audio service running. To listen to Unísono alongside Spotify or another music app, leave **Mezclar con otras apps** enabled in Android before connecting. Disconnect to change this setting. Uncheck it if you prefer Unísono to request audio focus and stop when another app takes over.
+
+Mixing mode deliberately does not request audio focus; it keeps normal media/music audio attributes. Simply ignoring focus-loss callbacks after acquiring focus would still allow Android 12+ to fade the player. See [Android's audio-focus documentation](https://developer.android.com/media/optimize/audio-focus). The service also stops when Android reports call, ringtone, or communication mode; reconnect after the call. This check does not detect communication apps that fail to report their audio mode.
+
+Background playback, both music-app start orders, and normal-mode focus loss are tested on an Android 15 emulator with an independent media player. The mixer reports both tracks active and unmuted in mixing mode. This does not verify acoustic output or guarantee Spotify/Samsung firmware behavior on the physical S25 Ultra. Device battery restrictions can also interrupt long background sessions.
 
 ## Audio quality and timing
 
@@ -88,7 +97,17 @@ bash scripts/test.sh
 
 This checks the capture ring and Swift/Java protocol interoperability: exact PCM sample bits, authenticated encryption, clock messages, volume messages, explicit stop, reconnection and rejection of incorrect pairing keys. Fixed `1111…` and `2222…` keys in tests are public fixtures, never production pairing keys.
 
-An Android instrumentation smoke test is included in `tests/SmokeTest.java`; it is compiled only when `UNISONO_TEST=1`. It targets an emulator and a test server at `10.0.2.2:45871`, not a physical phone or the production app. The instrumented APK is written under `build/`, not `dist/`.
+With an Android 15 emulator running and `ANDROID_HOME` configured, run `bash scripts/test-android.sh`. It builds the test APK and a separate-UID media-player fixture, verifies advancing background playback, both mixing start orders, unmuted mixer state, normal-mode focus loss, and explicit disconnect. It targets the emulator and a test server at `10.0.2.2:45871`; test APKs stay under `build/` and are excluded from releases.
+
+Mac appearance regression captures exercise a real popover in light and dark host windows:
+
+```sh
+mkdir -p build/mac
+./dist/Unisono.app/Contents/MacOS/Unisono --preview --light-host --popover "$PWD/build/mac/popover-light.png"
+./dist/Unisono.app/Contents/MacOS/Unisono --preview --popover "$PWD/build/mac/popover-dark.png"
+```
+
+Preview mode uses synthetic connection state and does not start the network listener.
 
 ## Validation so far
 
@@ -96,8 +115,8 @@ An Android instrumentation smoke test is included in `tests/SmokeTest.java`; it 
 - Swift/Java interoperability: 8,192 stereo frames compared bit for bit.
 - Capture-ring FIFO, planar/interleaved input and bounded overflow tests passed.
 - Actual Mac capture delivered roughly 15 seconds of nonzero stereo audio at 48 kHz. Audio was not saved.
-- Android 15 emulator instrumentation exercised link import, connection, six seconds of AudioTrack playback with a foreground service, and explicit disconnect.
-- Native UI captures were reviewed for layout and light-on-dark text contrast.
+- Android 15 emulator instrumentation exercised encrypted playback in the background, simultaneous unmuted playback with a separate music app in both start orders, normal-mode focus loss, and explicit disconnect.
+- Native UI captures were reviewed for layout and light-on-dark text contrast. Real popover captures are identical under light and dark host appearances; settings also use explicit light text.
 
 Still pending: physical S25 Ultra testing, actual Wi-Fi performance, acoustic latency/synchronization measurements, longer sessions, and first-use QR/permission flows on Samsung devices.
 

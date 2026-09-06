@@ -6,8 +6,8 @@
 <key>CFBundleName</key><string>Unísono</string>
 <key>CFBundleDisplayName</key><string>Unísono</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>0.1.1</string>
+<key>CFBundleVersion</key><string>2</string>
 <key>LSMinimumSystemVersion</key><string>14.2</string>
 <key>LSUIElement</key><true/>
 <key>NSAudioCaptureUsageDescription</key><string>Unísono transmite el audio de tu Mac a tu teléfono por tu red Wi-Fi.</string>

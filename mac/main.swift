@@ -5,6 +5,8 @@ import Darwin
 import CoreImage
 
 let mint=NSColor(srgbRed:0.49,green:0.81,blue:0.62,alpha:1)
+let ink=NSColor(white:0.94,alpha:1)
+let buttonInk=NSColor(white:0.05,alpha:1)
 let muted=NSColor(white:0.65,alpha:1)
 final class MintSliderCell:NSSliderCell {
     override func drawBar(inside rect:NSRect,flipped:Bool) {
@@ -15,11 +17,17 @@ final class MintSliderCell:NSSliderCell {
 }
 final class Surface:NSView {
     override var isFlipped:Bool { true }
-    override init(frame:NSRect) { super.init(frame:frame); wantsLayer=true; layer?.backgroundColor=NSColor(srgbRed:0.10,green:0.11,blue:0.11,alpha:1).cgColor }
+    override init(frame:NSRect) { super.init(frame:frame); appearance=NSAppearance(named:.darkAqua); wantsLayer=true; layer?.backgroundColor=NSColor(srgbRed:0.10,green:0.11,blue:0.11,alpha:1).cgColor }
     required init?(coder:NSCoder) { fatalError() }
 }
-func label(_ text:String,_ size:CGFloat,_ weight:NSFont.Weight = .regular,_ color:NSColor = .labelColor) -> NSTextField {
+func label(_ text:String,_ size:CGFloat,_ weight:NSFont.Weight = .regular,_ color:NSColor = ink) -> NSTextField {
     let l=NSTextField(wrappingLabelWithString:text); l.font = .systemFont(ofSize:size,weight:weight); l.textColor=color; l.isSelectable=false; return l
+}
+// Attributed titles keep borderless controls legible even in a light menu-bar host.
+func tintTitle(_ button:NSButton,_ color:NSColor = ink) {
+    let paragraph=NSMutableParagraphStyle(); paragraph.alignment=button.alignment
+    let title=NSAttributedString(string:button.title,attributes:[.foregroundColor:color,.font:button.font ?? NSFont.systemFont(ofSize:13),.paragraphStyle:paragraph])
+    button.attributedTitle=title; button.attributedAlternateTitle=title; button.contentTintColor=color
 }
 func ips() -> [String] {
     var p:UnsafeMutablePointer<ifaddrs>?; guard getifaddrs(&p)==0 else { return [] }; defer { freeifaddrs(p) }
@@ -41,12 +49,12 @@ final class App:NSObject,NSApplicationDelegate {
     var trim:Double { max(-0.1,min(0.1,UserDefaults.standard.double(forKey:"trim"))) }
     var local:Bool { UserDefaults.standard.object(forKey:"local")==nil || UserDefaults.standard.bool(forKey:"local") }
     func applicationDidFinishLaunching(_ notification:Notification) {
-        NSApp.setActivationPolicy(.accessory); NSApp.appearance=NSAppearance(named:.darkAqua)
+        NSApp.setActivationPolicy(.accessory); NSApp.appearance=NSAppearance(named:CommandLine.arguments.contains("--light-host") ? .aqua : .darkAqua)
         if let saved=UserDefaults.standard.string(forKey:"pairKey"),let d=Data(hex:saved) { secret=d } else { secret=randomBytes(16); UserDefaults.standard.set(secret.hex,forKey:"pairKey") }
         item=NSStatusBar.system.statusItem(withLength:NSStatusItem.squareLength)
         item.button?.image=NSImage(systemSymbolName:"waveform",accessibilityDescription:"Unísono"); item.button?.target=self; item.button?.action=#selector(toggle)
         item.button?.toolTip="Unísono — Audio compartido"
-        pop.behavior = .transient; pop.contentSize=NSSize(width:360,height:558)
+        pop.appearance=NSAppearance(named:.darkAqua); pop.behavior = .transient; pop.contentSize=NSSize(width:360,height:558)
         let vc=NSViewController(); vc.view=makePanel(); pop.contentViewController=vc
         server=LinkServer(secret:secret)
         server.onReady={ [weak self] in self?.startAudio() }
@@ -76,23 +84,23 @@ final class App:NSObject,NSApplicationDelegate {
     func makePanel()->NSView {
         let v=Surface(frame:NSRect(x:0,y:0,width:360,height:558))
         func put(_ sub:NSView,_ x:CGFloat,_ y:CGFloat,_ w:CGFloat,_ h:CGFloat) { sub.frame=NSRect(x:x,y:y,width:w,height:h); v.addSubview(sub) }
-        func line(_ y:CGFloat) { let b=NSBox(); b.boxType = .separator; put(b,0,y,360,1) }
+        func line(_ y:CGFloat) { let b=NSBox(); b.boxType = .custom; b.borderWidth=0; b.fillColor=NSColor(white:0.20,alpha:1); put(b,0,y,360,1) }
         put(label("Unísono",24,.semibold),28,23,245,35)
-        let gear=NSButton(image:NSImage(systemSymbolName:"gearshape",accessibilityDescription:"Configuración")!,target:self,action:#selector(openSettings)); gear.isBordered=false; put(gear,305,24,28,28)
+        let gear=NSButton(image:NSImage(systemSymbolName:"gearshape",accessibilityDescription:"Configuración")!,target:self,action:#selector(openSettings)); gear.isBordered=false; gear.contentTintColor=ink; put(gear,305,24,28,28)
         line(82)
         stateLabel=label("●  Listo para conectar",15,.medium,mint); put(stateLabel,28,104,304,24)
         deviceLabel=label("Mac +\nTu Android",28,.semibold); put(deviceLabel,28,144,305,78)
         put(label("Audio en ambos dispositivos",16,.regular,NSColor(white:0.76,alpha:1)),28,228,310,25)
         qualityLabel=label("PCM sin compresión · Perfil estable",13,.regular,muted); put(qualityLabel,28,264,305,24)
         line(300)
-        let speaker=NSImageView(image:NSImage(systemSymbolName:"speaker.wave.2.fill",accessibilityDescription:nil)!); put(speaker,28,320,23,23)
+        let speaker=NSImageView(image:NSImage(systemSymbolName:"speaker.wave.2.fill",accessibilityDescription:nil)!); speaker.contentTintColor=ink; put(speaker,28,320,23,23)
         put(label("Volumen del celular",17),60,319,266,27)
         volume=NSSlider(); volume.cell=MintSliderCell(); volume.minValue=0; volume.maxValue=1; volume.doubleValue=0.6; volume.target=self; volume.action=#selector(changeVolume); volume.isContinuous=true; volume.isEnabled=false; put(volume,27,355,307,27)
-        mainButton=NSButton(title:"Conectar celular",target:self,action:#selector(primary)); mainButton.bezelStyle = .rounded; mainButton.isBordered=false; mainButton.wantsLayer=true; mainButton.layer?.backgroundColor=mint.cgColor; mainButton.layer?.cornerRadius=9; mainButton.font = .systemFont(ofSize:18,weight:.medium); mainButton.contentTintColor=NSColor(white:0.05,alpha:1); put(mainButton,26,398,308,48)
+        mainButton=NSButton(title:"Conectar celular",target:self,action:#selector(primary)); mainButton.bezelStyle = .rounded; mainButton.isBordered=false; mainButton.wantsLayer=true; mainButton.layer?.backgroundColor=mint.cgColor; mainButton.layer?.cornerRadius=9; mainButton.font = .systemFont(ofSize:18,weight:.medium); tintTitle(mainButton,buttonInk); put(mainButton,26,398,308,48)
         line(466)
-        let change=NSButton(title:"Cambiar dispositivo                         ›",target:self,action:#selector(openSettings)); change.isBordered=false; change.alignment = .left; change.font = .systemFont(ofSize:15); put(change,27,480,307,26)
+        let change=NSButton(title:"Cambiar dispositivo                         ›",target:self,action:#selector(openSettings)); change.isBordered=false; change.alignment = .left; change.font = .systemFont(ofSize:15); tintTitle(change); put(change,27,480,307,26)
         line(517)
-        let quit=NSButton(title:"Salir de Unísono",target:self,action:#selector(quitApp)); quit.isBordered=false; quit.font = .systemFont(ofSize:14); quit.contentTintColor=muted; quit.alignment = .left; put(quit,27,527,220,25)
+        let quit=NSButton(title:"Salir de Unísono",target:self,action:#selector(quitApp)); quit.isBordered=false; quit.font = .systemFont(ofSize:14); quit.contentTintColor=muted; quit.alignment = .left; tintTitle(quit,muted); put(quit,27,527,220,25)
         detailLabel=label("",12,.regular,muted)
         return v
     }
@@ -107,34 +115,34 @@ final class App:NSObject,NSApplicationDelegate {
             try capture.start(delay:delay,trim:trim,local:local)
             let config:[String:Any]=["rate":Int(capture.rate),"channels":2,"format":"float32le","delayMs":Int(delay*1000),"version":1,"volume":volume.doubleValue]
             server.send(1,try JSONSerialization.data(withJSONObject:config)); streaming=true; lastHeartbeat=clockNS()
-            stateLabel.stringValue="●  Transmitiendo"; deviceLabel.stringValue="Mac +\nGalaxy S25 Ultra"; mainButton.title="Detener transmisión"; volume.isEnabled=true
+            stateLabel.stringValue="●  Transmitiendo"; deviceLabel.stringValue="Mac +\nGalaxy S25 Ultra"; mainButton.title="Detener transmisión"; tintTitle(mainButton,buttonInk); volume.isEnabled=true
             qualityLabel.stringValue="PCM sin compresión · \(Int(delay*1000)) ms de reserva"
         } catch { server.disconnect(error.localizedDescription); stopAudio(message:error.localizedDescription) }
     }
     func stopAudio(message:String) {
-        capture.stop(); streaming=false; stateLabel.stringValue="●  Listo para conectar"; mainButton.title="Conectar celular"; volume.isEnabled=false; deviceLabel.stringValue="Mac +\nTu Android"; qualityLabel.stringValue="PCM sin compresión · Perfil estable"
+        capture.stop(); streaming=false; stateLabel.stringValue="●  Listo para conectar"; mainButton.title="Conectar celular"; tintTitle(mainButton,buttonInk); volume.isEnabled=false; deviceLabel.stringValue="Mac +\nTu Android"; qualityLabel.stringValue="PCM sin compresión · Perfil estable"
         detailLabel.stringValue=message
         if !message.isEmpty && message != "Listo para conectar" { stateLabel.stringValue="●  Conexión detenida"; item.button?.toolTip="Unísono: "+message }
     }
     @objc func openSettings() {
         pop.performClose(nil)
         if settings==nil {
-            let w=NSWindow(contentRect:NSRect(x:0,y:0,width:460,height:710),styleMask:[.titled,.closable],backing:.buffered,defer:false); w.title="Unísono · Configuración"; w.isReleasedWhenClosed=false; w.center()
+            let w=NSWindow(contentRect:NSRect(x:0,y:0,width:460,height:710),styleMask:[.titled,.closable],backing:.buffered,defer:false); w.appearance=NSAppearance(named:.darkAqua); w.title="Unísono · Configuración"; w.isReleasedWhenClosed=false; w.center()
             let v=Surface(frame:NSRect(x:0,y:0,width:460,height:710)); w.contentView=v
             func put(_ s:NSView,_ y:CGFloat,_ h:CGFloat) { s.frame=NSRect(x:24,y:y,width:412,height:h); v.addSubview(s) }
             put(label("Conecta tu Android",23,.semibold),22,33)
             put(label("En la misma red Wi-Fi, escanea el QR con la cámara del teléfono o pega el enlace en Unísono para Android.",13,.regular,muted),63,45)
-            linkField=NSTextField(); linkField.isEditable=false; linkField.isSelectable=true; linkField.font = .monospacedSystemFont(ofSize:11,weight:.regular); put(linkField,119,32)
-            let copy=NSButton(title:"Copiar enlace de conexión",target:self,action:#selector(copyLink)); copy.bezelStyle = .rounded; put(copy,158,33)
+            linkField=NSTextField(); linkField.textColor=ink; linkField.backgroundColor=NSColor(white:0.16,alpha:1); linkField.isEditable=false; linkField.isSelectable=true; linkField.font = .monospacedSystemFont(ofSize:11,weight:.regular); put(linkField,119,32)
+            let copy=NSButton(title:"Copiar enlace de conexión",target:self,action:#selector(copyLink)); copy.bezelStyle = .rounded; tintTitle(copy); put(copy,158,33)
             qrView=NSImageView(frame:NSRect(x:160,y:201,width:140,height:140)); qrView.imageScaling = .scaleProportionallyUpOrDown; v.addSubview(qrView)
             put(label("Reserva de audio",14,.medium),364,24)
             delayPicker=NSPopUpButton(); delayPicker.addItems(withTitles:["120 ms · Menor retraso","250 ms · Estable","500 ms · Mayor estabilidad"]); delayPicker.selectItem(at:delay<0.2 ? 0 : delay<0.4 ? 1 : 2); delayPicker.target=self; delayPicker.action=#selector(saveSettings); put(delayPicker,391,30)
-            localSwitch=NSButton(checkboxWithTitle:"Escuchar también en la Mac",target:self,action:#selector(saveSettings)); localSwitch.state=local ? .on : .off; put(localSwitch,439,25)
+            localSwitch=NSButton(checkboxWithTitle:"Escuchar también en la Mac",target:self,action:#selector(saveSettings)); tintTitle(localSwitch); localSwitch.state=local ? .on : .off; put(localSwitch,439,25)
             put(label("Ajuste de la Mac (ms, −100 a +100)",14,.medium),479,24)
-            trimField=NSTextField(string:String(Int(trim*1000))); trimField.target=self; trimField.action=#selector(saveSettings); put(trimField,509,28)
-            let save=NSButton(title:"Aplicar y reconectar",target:self,action:#selector(saveSettings)); save.bezelStyle = .rounded; put(save,550,31)
+            trimField=NSTextField(string:String(Int(trim*1000))); trimField.textColor=ink; trimField.backgroundColor=NSColor(white:0.16,alpha:1); trimField.target=self; trimField.action=#selector(saveSettings); put(trimField,509,28)
+            let save=NSButton(title:"Aplicar y reconectar",target:self,action:#selector(saveSettings)); save.bezelStyle = .rounded; tintTitle(save); put(save,550,31)
             detailLabel.frame=NSRect(x:24,y:596,width:412,height:62); v.addSubview(detailLabel)
-            let rotate=NSButton(title:"Revocar clave y crear otra",target:self,action:#selector(rotateKey)); rotate.bezelStyle = .rounded; put(rotate,661,29)
+            let rotate=NSButton(title:"Revocar clave y crear otra",target:self,action:#selector(rotateKey)); rotate.bezelStyle = .rounded; tintTitle(rotate); put(rotate,661,29)
             settings=w
         }
         linkField.stringValue="unisono://\(ips().first ?? "127.0.0.1"):45871#\(secret.hex)"
@@ -148,8 +156,22 @@ final class App:NSObject,NSApplicationDelegate {
     }
     @objc func rotateKey() { server.disconnect(""); secret=randomBytes(16); UserDefaults.standard.set(secret.hex,forKey:"pairKey"); server.secret=secret; openSettings(); detailLabel.stringValue="Clave anterior revocada. Copia el nuevo enlace en el celular." }
     func preview() {
-        stateLabel.stringValue="●  Transmitiendo"; deviceLabel.stringValue="Mac +\nGalaxy S25 Ultra"; mainButton.title="Detener transmisión"; volume.isEnabled=true
-        let w=NSWindow(contentRect:NSRect(x:0,y:0,width:360,height:558),styleMask:[.borderless],backing:.buffered,defer:false); w.contentView=pop.contentViewController!.view; w.center(); w.makeKeyAndOrderFront(nil); settings=w
+        stateLabel.stringValue="●  Transmitiendo"; deviceLabel.stringValue="Mac +\nGalaxy S25 Ultra"; mainButton.title="Detener transmisión"; tintTitle(mainButton,buttonInk); volume.isEnabled=true
+        if CommandLine.arguments.contains("--popover") {
+            // Exercise a real popover inside a light/dark host, independent of menu-bar overflow.
+            let host=NSWindow(contentRect:NSRect(x:300,y:300,width:100,height:40),styleMask:[.borderless],backing:.buffered,defer:false)
+            host.appearance=NSApp.appearance
+            let anchor=NSButton(frame:NSRect(x:0,y:0,width:100,height:40)); host.contentView?.addSubview(anchor)
+            host.makeKeyAndOrderFront(nil); settings=host; NSApp.activate(ignoringOtherApps:true)
+            pop.animates=false; pop.behavior = .applicationDefined
+            pop.show(relativeTo:anchor.bounds,of:anchor,preferredEdge:.minY)
+            DispatchQueue.main.asyncAfter(deadline:.now()+0.3) {
+                guard let window=self.pop.contentViewController?.view.window else { fputs("Popover did not open\n",stderr); exit(1) }
+                self.snapshot(window)
+            }
+            return
+        }
+        let w=NSWindow(contentRect:NSRect(x:0,y:0,width:360,height:558),styleMask:[.borderless],backing:.buffered,defer:false); w.appearance=NSApp.appearance; w.contentView=pop.contentViewController!.view; w.center(); w.makeKeyAndOrderFront(nil); settings=w
         snapshot(w)
     }
     func snapshot(_ w:NSWindow) {

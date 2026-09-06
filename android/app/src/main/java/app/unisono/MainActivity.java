@@ -15,6 +15,7 @@ public class MainActivity extends Activity {
     private TextView state,hero,detail,route;
     private EditText link;
     private Button connect;
+    private CheckBox mix;
     private SeekBar volume;
     private LinearLayout pairing,audioControls;
     private final Handler handler=new Handler(Looper.getMainLooper());
@@ -44,6 +45,11 @@ public class MainActivity extends Activity {
         route=text("Salida del teléfono",13,gray,false); audioControls.addView(route); gap(root,8);
         detail=text("PCM sin compresión · Perfil estable",13,gray,false); root.addView(detail); gap(root,22);
         connect=new Button(this); connect.setText("Conectar"); connect.setAllCaps(false); connect.setTextSize(18); connect.setTextColor(Color.rgb(12,27,18)); GradientDrawable bg=new GradientDrawable(); bg.setColor(green); bg.setCornerRadius(dp(12)); connect.setBackground(bg); root.addView(connect,new LinearLayout.LayoutParams(-1,dp(54))); connect.setOnClickListener(v->toggle());
+        gap(root,12);
+        mix=new CheckBox(this); mix.setText("Mezclar con otras apps"); mix.setTextColor(Color.WHITE); mix.setTextSize(15); mix.setButtonTintList(android.content.res.ColorStateList.valueOf(green));
+        mix.setChecked(getSharedPreferences("playback",MODE_PRIVATE).getBoolean("mixWithOtherApps",true));
+        mix.setOnCheckedChangeListener((button,checked)->getSharedPreferences("playback",MODE_PRIVATE).edit().putBoolean("mixWithOtherApps",checked).apply()); root.addView(mix);
+        root.addView(text("Escucha Unísono junto a Spotify u otras apps. Desconecta para cambiar este ajuste.",13,gray,false));
         gap(root,14); TextView settings=text("La sincronización se ajusta desde la Mac",13,gray,false); settings.setGravity(Gravity.CENTER); root.addView(settings);
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},10);
         if(getIntent().getData()!=null && "unisono".equals(getIntent().getData().getScheme())) link.setText(getIntent().getData().toString());
@@ -59,6 +65,7 @@ public class MainActivity extends Activity {
     }
     private void update() {
         boolean active=AudioService.connected,busy=AudioService.connecting;
+        mix.setEnabled(!active&&!busy); mix.setAlpha(active||busy ? 0.65f : 1f);
         state.setText(AudioService.status); hero.setText(active ? "Mac +\n"+(Build.MODEL.startsWith("SM-S938") ? "Galaxy S25 Ultra" : Build.MODEL) : "Escucha tu Mac.\nTambién aquí."); audioControls.setVisibility(active ? View.VISIBLE : View.GONE);
         pairing.setVisibility(active ? View.GONE : View.VISIBLE); connect.setText(active ? "Desconectar" : busy ? "Cancelar conexión" : "Conectar");
         volume.setEnabled(active); if(!volume.isPressed()) volume.setProgress((int)(AudioService.volume*100)); detail.setText(AudioService.details); route.setText(AudioService.route);

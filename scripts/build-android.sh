@@ -10,7 +10,7 @@ mkdir -p "$BUILD/classes" "$BUILD/generated" "$BUILD/dex" "$ROOT/dist"
 MANIFEST="$ROOT/android/app/src/main/AndroidManifest.xml"
 APK="$ROOT/dist/Unisono-Android.apk"
 if [ "${UNISONO_TEST:-0}" = "1" ]; then
-  sed 's#</manifest>#<instrumentation android:name="app.unisono.SmokeTest" android:targetPackage="app.unisono" /></manifest>#' "$MANIFEST" > "$BUILD/test-manifest.xml"
+  sed 's#</manifest>#<queries><package android:name="app.unisono.focusfixture" /></queries><instrumentation android:name="app.unisono.SmokeTest" android:targetPackage="app.unisono" /></manifest>#' "$MANIFEST" > "$BUILD/test-manifest.xml"
   MANIFEST="$BUILD/test-manifest.xml"
   APK="$BUILD/Unisono-test.apk"
 fi

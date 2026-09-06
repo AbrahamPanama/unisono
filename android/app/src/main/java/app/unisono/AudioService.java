@@ -24,6 +24,7 @@ public class AudioService extends Service {
     private WifiManager.WifiLock wifi;
     private AudioManager manager;
     private AudioFocusRequest focus;
+    private boolean focusHeld, mixWithOtherApps;
     private volatile double syncMs=Double.NaN;
     private volatile int underruns=0;
     private volatile Throwable playbackFailure;
@@ -37,7 +38,7 @@ public class AudioService extends Service {
         super.onCreate(); instance=this;
         NotificationManager nm=getSystemService(NotificationManager.class); nm.createNotificationChannel(new NotificationChannel("audio","Audio compartido",NotificationManager.IMPORTANCE_LOW));
         manager=getSystemService(AudioManager.class);
-        focus=new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()).setOnAudioFocusChangeListener(change->{ if(change==AudioManager.AUDIOFOCUS_LOSS||change==AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) { status="Audio interrumpido por otra aplicación"; stopSelf(); } },main).build();
+        focus=new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()).setOnAudioFocusChangeListener(change->{ if(!mixWithOtherApps && (change==AudioManager.AUDIOFOCUS_LOSS||change==AudioManager.AUDIOFOCUS_LOSS_TRANSIENT)) { status="Audio interrumpido por otra aplicación"; stopSelf(); } },main).build();
     }
     private Notification notification(String text) {
         PendingIntent open=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
@@ -48,7 +49,14 @@ public class AudioService extends Service {
         if(intent==null||"STOP".equals(intent.getAction())) { stopSelf(); return START_NOT_STICKY; }
         if(running) return START_NOT_STICKY;
         startForeground(1,notification("Conectando con tu Mac…"));
-        if(manager.requestAudioFocus(focus)!=AudioManager.AUDIOFOCUS_REQUEST_GRANTED) { status="No se pudo obtener la salida de audio"; stopSelf(); return START_NOT_STICKY; }
+        mixWithOtherApps=getSharedPreferences("playback",MODE_PRIVATE).getBoolean("mixWithOtherApps",true);
+        // User-controlled mixing does not claim focus. Ignoring loss after claiming GAIN is not
+        // enough on Android 12+, which can enforce a fade on the losing player.
+        if(!mixWithOtherApps) {
+            focusHeld=manager.requestAudioFocus(focus)==AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+            if(!focusHeld) { status="No se pudo obtener la salida de audio"; stopSelf(); return START_NOT_STICKY; }
+        }
+        if(communicationActive()) { status="Conecta después de la llamada"; stopSelf(); return START_NOT_STICKY; }
         running=true; connecting=true;
         wake=getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"Unisono:audio"); wake.acquire();
         WifiManager wm=(WifiManager)getApplicationContext().getSystemService(WIFI_SERVICE); if(wm!=null) { wifi=wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF,"Unisono:wifi"); wifi.acquire(); }
@@ -60,6 +68,7 @@ public class AudioService extends Service {
             Thread audio=null;
             try {
                 status=retries==0 ? "Conectando…" : "Reconectando…"; wire=new Wire(link);
+                if(!running) break;
                 long best=Long.MAX_VALUE;
                 for(int i=0;i<8;i++) { long t0=System.nanoTime(); wire.send(3,Wire.longBytes(t0)); byte[] b=wire.read(); long t1=System.nanoTime(); if(b.length!=17||b[0]!=4) throw new IOException("Sincronización de reloj inválida"); ByteBuffer p=ByteBuffer.wrap(b); p.get(); long echo=p.getLong(),server=p.getLong(); if(echo!=t0) throw new IOException("Respuesta de reloj inválida"); if(t1-t0<best) { best=t1-t0; localMinusServer=t0+(t1-t0)/2-server; } }
                 wire.send(5,new byte[0]); byte[] config=wire.read(); if(config[0]!=1) throw new IOException("No llegó el formato de audio");
@@ -114,6 +123,7 @@ public class AudioService extends Service {
                 if(System.nanoTime()>c.pts+localMinusServer+delayMs*1_000_000L+200_000_000L) throw new IOException("La red superó la reserva; resincronizando");
                 write(t,c.samples,0); long now=System.nanoTime();
                 if(now-lastCorrection>500_000_000L) {
+                    if(communicationActive()) { running=false; status="Audio detenido durante una llamada"; Wire w=wire; if(w!=null) w.close(); main.post(this::stopSelf); break; }
                     AudioTimestamp ts=new AudioTimestamp();
                     if(t.getTimestamp(ts)) {
                         double desired=origin+ts.framePosition*(1e9/rate); syncMs=(ts.nanoTime-desired)/1e6;
@@ -130,12 +140,16 @@ public class AudioService extends Service {
         } catch(Throwable e) { if(running&&sessionActive) { playbackFailure=e; Wire w=wire; if(w!=null) w.close(); } }
         finally { track=null; if(t!=null) { try { t.pause(); t.flush(); } catch(Exception ignored) {} t.release(); } }
     }
+    private boolean communicationActive() {
+        int mode=manager.getMode();
+        return mode==AudioManager.MODE_IN_CALL || mode==AudioManager.MODE_IN_COMMUNICATION || mode==AudioManager.MODE_RINGTONE;
+    }
     private void write(AudioTrack t,float[] data,int offset) throws Exception { while(offset<data.length&&running&&sessionActive) { int n=t.write(data,offset,data.length-offset,AudioTrack.WRITE_BLOCKING); if(n<=0) throw new IOException("Salida de audio no disponible: "+n); offset+=n; } }
     public void setVolume(float v) { volume=Math.max(0,Math.min(1,v)); AudioTrack t=track; if(t!=null) try { t.setVolume(volume); } catch(IllegalStateException ignored) {} }
     @Override public void onDestroy() {
         running=false; sessionActive=false; connected=false; connecting=false;
         Wire w=wire; if(w!=null) w.close(); if(worker!=null) worker.interrupt();
-        if(wake!=null&&wake.isHeld()) wake.release(); if(wifi!=null&&wifi.isHeld()) wifi.release(); if(manager!=null&&focus!=null) manager.abandonAudioFocusRequest(focus);
+        if(wake!=null&&wake.isHeld()) wake.release(); if(wifi!=null&&wifi.isHeld()) wifi.release(); if(focusHeld&&manager!=null&&focus!=null) manager.abandonAudioFocusRequest(focus); focusHeld=false;
         instance=null; stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy();
     }
     @Override public IBinder onBind(Intent i) { return null; }

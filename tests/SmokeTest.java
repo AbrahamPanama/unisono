@@ -9,6 +9,46 @@ import java.io.*;
 
 /** Installed only in the test APK; exercises the real Activity, service, socket and AudioTrack. */
 public class SmokeTest extends Instrumentation {
+    private volatile Boolean fixturePlaying;
+    private final BroadcastReceiver fixtureState=new BroadcastReceiver() {
+        @Override public void onReceive(Context c,Intent i) { fixturePlaying=i.getBooleanExtra("playing",false); }
+    };
+    private void fixture(String mode,boolean expectPlaying) throws Exception {
+        fixturePlaying=null;
+        getTargetContext().startActivity(new Intent().setComponent(new ComponentName("app.unisono.focusfixture","app.unisono.focusfixture.PlayerActivity")).putExtra("mode",mode).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        long end=System.nanoTime()+5_000_000_000L;
+        while(fixturePlaying==null && System.nanoTime()<end) Thread.sleep(100);
+        if(fixturePlaying==null || fixturePlaying!=expectPlaying) throw new AssertionError("Independent player failed: "+mode+" / "+fixturePlaying);
+    }
+    private long frames() throws Exception {
+        AudioService service=AudioService.instance;
+        if(service==null || !AudioService.connected) throw new AssertionError("Audio service stopped: "+AudioService.status);
+        java.lang.reflect.Field field=AudioService.class.getDeclaredField("track"); field.setAccessible(true);
+        android.media.AudioTrack track=(android.media.AudioTrack)field.get(service);
+        if(track==null || track.getPlayState()!=android.media.AudioTrack.PLAYSTATE_PLAYING) throw new AssertionError("AudioTrack not playing");
+        return Integer.toUnsignedLong(track.getPlaybackHeadPosition());
+    }
+    private void advancing() throws Exception { long before=frames(); Thread.sleep(2200); if(frames()-before<48000) throw new AssertionError("Playback did not advance in background"); }
+    private void assertMixer() throws Exception {
+        String dump;
+        try(ParcelFileDescriptor fd=getUiAutomation().executeShellCommand("dumpsys audio"); FileInputStream in=new FileInputStream(fd.getFileDescriptor()); ByteArrayOutputStream out=new ByteArrayOutputStream()) {
+            byte[] buf=new byte[4096]; int n; while((n=in.read(buf))!=-1) out.write(buf,0,n); dump=out.toString("UTF-8");
+        }
+        int other=getTargetContext().getPackageManager().getApplicationInfo("app.unisono.focusfixture",0).uid;
+        for(int uid:new int[]{android.os.Process.myUid(),other}) {
+            boolean audible=false;
+            for(String line:dump.split("\n")) if(line.contains("type:android.media.AudioTrack") && line.contains("u/pid:"+uid+"/") && line.contains("state:started") && line.contains("mutedState:none")) audible=true;
+            if(!audible) throw new AssertionError("Mixer has no unmuted active AudioTrack for UID "+uid);
+        }
+        if(!dump.matches("(?s).*faded out players piids:\\s*muted player piids due to call/ring:.*")) throw new AssertionError("Mixer reports faded players");
+        try(FileOutputStream out=new FileOutputStream(new File(getTargetContext().getExternalFilesDir(null),"audio-mixing-state.txt"))) { out.write(dump.getBytes("UTF-8")); }
+    }
+    private void awaitConnection() throws Exception {
+        long end=System.nanoTime()+12_000_000_000L;
+        while(!AudioService.connected && System.nanoTime()<end) Thread.sleep(200);
+        if(!AudioService.connected) throw new AssertionError("Connection failed: "+AudioService.status);
+        Thread.sleep(1000);
+    }
     @Override public void onCreate(Bundle args) { super.onCreate(args); start(); }
     private View find(View v,String text) {
         if(v instanceof Button && ((Button)v).getText().toString().equals(text)) return v;
@@ -20,18 +60,38 @@ public class SmokeTest extends Instrumentation {
     @Override public void onStart() {
         Bundle result=new Bundle();
         try {
+            if(Build.VERSION.SDK_INT>=33) getTargetContext().registerReceiver(fixtureState,new IntentFilter("app.unisono.TEST_PLAYER_STATE"),Context.RECEIVER_EXPORTED);
+            else getTargetContext().registerReceiver(fixtureState,new IntentFilter("app.unisono.TEST_PLAYER_STATE"));
+            getTargetContext().getSharedPreferences("playback",Context.MODE_PRIVATE).edit().putBoolean("mixWithOtherApps",true).commit();
             Intent intent=new Intent(Intent.ACTION_VIEW,android.net.Uri.parse("unisono://10.0.2.2:45871#11111111111111111111111111111111"),getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             Activity a=startActivitySync(intent); waitForIdleSync(); Thread.sleep(1000); save(a,"android-idle.png");
             runOnMainSync(()-> { View b=find(a.getWindow().getDecorView(),"Conectar"); if(b==null) throw new AssertionError("Connect button missing"); b.performClick(); });
-            long deadline=System.nanoTime()+12_000_000_000L;
-            while(!AudioService.connected && System.nanoTime()<deadline) Thread.sleep(200);
-            if(!AudioService.connected) throw new AssertionError("Connection failed: "+AudioService.status);
-            Thread.sleep(6000);
-            if(!AudioService.connected) throw new AssertionError("Playback failed: "+AudioService.status);
-            save(a,"android-connected.png");
-            runOnMainSync(()-> { View b=find(a.getWindow().getDecorView(),"Desconectar"); if(b==null) throw new AssertionError("Disconnect button missing"); b.performClick(); });
+            awaitConnection(); advancing(); save(a,"android-connected.png");
+            fixture("silent",false); advancing();
+            fixture("play",true); advancing();
+            if(a.hasWindowFocus()) throw new AssertionError("Receiver Activity did not enter background");
+            fixture("query",true); assertMixer(); // Both players still active after competing GAIN.
+            getTargetContext().stopService(new Intent(getTargetContext(),AudioService.class));
             Thread.sleep(1000); if(AudioService.connected||AudioService.connecting) throw new AssertionError("Service did not stop");
-            result.putString("stream","PASS: Activity link import, encrypted Mac connection, 6 seconds AudioTrack playback, foreground service, explicit disconnect. "+AudioService.details); finish(Activity.RESULT_OK,result);
+            // Reverse order: joining an already playing app must not steal its focus.
+            getTargetContext().startActivity(new Intent(getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT));
+            Thread.sleep(500);
+            getTargetContext().startForegroundService(new Intent(getTargetContext(),AudioService.class).putExtra("link",intent.getData().toString()));
+            awaitConnection(); advancing(); fixture("query",true); advancing(); assertMixer();
+            getTargetContext().stopService(new Intent(getTargetContext(),AudioService.class)); Thread.sleep(700);
+            // Normal mode still respects another music app's focus request.
+            fixture("silent",false);
+            getTargetContext().getSharedPreferences("playback",Context.MODE_PRIVATE).edit().putBoolean("mixWithOtherApps",false).commit();
+            getTargetContext().startActivity(new Intent(getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)); Thread.sleep(500);
+            getTargetContext().startForegroundService(new Intent(getTargetContext(),AudioService.class).putExtra("link",intent.getData().toString()));
+            awaitConnection(); advancing(); fixture("play",true);
+            long stoppedBy=System.nanoTime()+7_000_000_000L;
+            while(AudioService.instance!=null && System.nanoTime()<stoppedBy) Thread.sleep(100);
+            if(AudioService.connected||AudioService.connecting||AudioService.instance!=null) throw new AssertionError("Normal mode did not release focus");
+            fixture("silent",false);
+            getTargetContext().getSharedPreferences("playback",Context.MODE_PRIVATE).edit().putBoolean("mixWithOtherApps",true).commit();
+            getTargetContext().unregisterReceiver(fixtureState);
+            result.putString("stream","PASS: encrypted PCM playback, background Activity, mixing in both start orders with a separate-UID media player, normal-mode focus loss, explicit disconnect."); finish(Activity.RESULT_OK,result);
         } catch(Throwable e) { result.putString("stream","FAIL: "+e.toString()+"; "+AudioService.status); finish(Activity.RESULT_CANCELED,result); }
     }
 }
