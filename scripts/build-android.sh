@@ -19,7 +19,7 @@ find "$BUILD/classes" -type f -name '*.class' -delete
 "$BT/aapt2" compile --dir "$ROOT/android/app/src/main/res" -o "$BUILD/resources.zip"
 "$BT/aapt2" link -o "$BUILD/base.apk" -I "$API" --manifest "$MANIFEST" --java "$BUILD/generated" "$BUILD/resources.zip"
 find "$ROOT/android/app/src/main/java" "$BUILD/generated" -name '*.java' > "$BUILD/sources.txt"
-if [ "${UNISONO_TEST:-0}" = "1" ]; then echo "$ROOT/tests/SmokeTest.java" >> "$BUILD/sources.txt"; fi
+if [ "${UNISONO_TEST:-0}" = "1" ]; then printf '%s\n' "$ROOT/tests/SmokeTest.java" "$ROOT/tests/AacRoundTrip.java" >> "$BUILD/sources.txt"; fi
 "$JAVA_HOME/bin/javac" -source 8 -target 8 -bootclasspath "$API:$BT/core-lambda-stubs.jar" -d "$BUILD/classes" @"$BUILD/sources.txt"
 "$JAVA_HOME/bin/jar" cf "$BUILD/classes.jar" -C "$BUILD/classes" .
 "$BT/d8" --lib "$API" --min-api 26 --output "$BUILD/dex" "$BUILD/classes.jar"

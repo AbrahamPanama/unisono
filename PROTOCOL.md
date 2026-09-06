@@ -20,16 +20,21 @@ Envelope: 4-byte unsigned big-endian sealed length, 12-byte random nonce, cipher
 | 9 | Mac → Android | UTF-8 `Unisono/1` |
 | 3 | Android → Mac | uint64 client monotonic nanoseconds |
 | 4 | Mac → Android | echoed uint64 client time, uint64 server monotonic nanoseconds |
-| 5 | Android → Mac | empty; request capture after clock synchronization |
-| 1 | Mac → Android | JSON: version, rate, channels=2, format=float32le, delayMs, volume |
+| 5 | Android → Mac | optional JSON: codec (`pcm` or `aac-lc`), bitrate (160000 or 256000), reserveMs (500–1000); empty means legacy PCM |
+| 1 | Mac → Android | JSON: version, rate, channels=2, format (`float32le` or `aac-lc`), delayMs, volume; AAC also has bitrate and primingFrames |
 | 2 | Mac → Android | uint64 source time ns, uint64 cumulative frame index, uint32 frame count, stereo interleaved float32 LE samples |
+| 10 | Mac → Android | uint64 source time ns, uint64 cumulative encoded frame index, uint32 frame count=1024, one raw AAC-LC access unit |
 | 6 | Mac → Android | float32 volume 0…1, big-endian bits |
 | 7 | Mac → Android | UTF-8 reason for intentional stop; receiver must not reconnect automatically |
-| 8 | Android → Mac | JSON heartbeat: device, underruns, optional syncMs |
+| 8 | Android → Mac | JSON heartbeat: device, underruns, optional syncMs, bufferMs, reserveMs, codec, kbps (received plaintext payload rate) |
 
 All integers are big-endian. Only audio sample payloads are little-endian. One frame = left and right samples. Maximum frames per capture block = 4096. The receiver validates payload length, frame count and continuity before playback.
 
-Clock exchange: take eight RTT samples, use the shortest, estimate `localMinusServer = clientSend + RTT/2 - serverTime`. Source timestamps refer to the first captured frame of each packet. Local playout target = source timestamp + configured reservation; manual Mac trim affects only the Mac. Android computes target in its monotonic clock domain, starts AudioTrack near it, then estimates phase error through AudioTimestamp. Playback speed correction is bounded to ±0.5%; this is deliberately not advertised as bit-perfect output.
+AAC is only sent when requested. Output is 48 kHz stereo AAC-LC; AudioSpecificConfig is `11 90`. Encoded indices include encoder priming. AAC packet timestamps are `origin + max(0, encodedIndex - primingFrames) / rate`; the receiver removes the declared priming frames, then assigns a zero-based decoded index and the original source timeline. Only PCM mode claims exact source-sample transport. Volume ramps, local startup fades and drift correction affect rendered output.
+
+The Mac selects the maximum of its minimum reserve and the receiver's bounded request. Failed sessions reconnect with an additional 250 ms (cap 1000); balanced AAC falls to 160 kbps during recovery, while PCM never switches to a lossy mode. Both ends reset indices, codec state and timeline on each connection. The envelope and `Unisono/1` greeting remain backward-compatible: old receivers send an empty request, and new receivers accept an old server's PCM response.
+
+Clock exchange: take eight RTT samples, use the shortest, estimate `localMinusServer = clientSend + RTT/2 - serverTime`. Source timestamps refer to the first captured frame of each packet. Local playout target = source timestamp + configured reservation; manual Mac trim affects only the Mac. Android computes target in its monotonic clock domain, starts AudioTrack near it, then estimates phase error through AudioTimestamp. Playback speed correction is filtered, bounded to ±0.2%, rate-limited to 200 ppm per two seconds, and has a 3 ms deadband; this is deliberately not advertised as bit-perfect output.
 
 When congestion, capture-ring overflow, stale playback, missed heartbeat or route changes are detected, terminate/restart the session instead of silently dropping arbitrary source samples and continuing to claim uninterrupted lossless transport. Reconnection can introduce silence/discontinuities; reliable transport cannot guarantee uninterrupted audio on an unreliable network.
 

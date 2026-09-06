@@ -39,13 +39,14 @@ func ips() -> [String] {
 final class App:NSObject,NSApplicationDelegate {
     var item:NSStatusItem!, pop=NSPopover(), settings:NSWindow?
     let capture=Capture()
+    var encoder:AACEncoder?
     var server:LinkServer!
     var stateLabel:NSTextField!, deviceLabel:NSTextField!, qualityLabel:NSTextField!, detailLabel:NSTextField!, mainButton:NSButton!, volume:NSSlider!
     var linkField:NSTextField!, delayPicker:NSPopUpButton!, trimField:NSTextField!, localSwitch:NSButton!
     var qrView:NSImageView!
     var streaming=false, lastHeartbeat=clockNS(), watchdog:Timer?
     var secret=Data()
-    var delay:Double { let v=UserDefaults.standard.double(forKey:"delay"); return v>=0.12 && v<=1 ? v : 0.25 }
+    var delay:Double { let v=UserDefaults.standard.double(forKey:"delay"); return v>=0.5 && v<=1 ? v : 0.5 }
     var trim:Double { max(-0.1,min(0.1,UserDefaults.standard.double(forKey:"trim"))) }
     var local:Bool { UserDefaults.standard.object(forKey:"local")==nil || UserDefaults.standard.bool(forKey:"local") }
     func applicationDidFinishLaunching(_ notification:Notification) {
@@ -64,11 +65,19 @@ final class App:NSObject,NSApplicationDelegate {
             if type==7 { self.server.disconnect("") }
             if type==8 { self.lastHeartbeat=clockNS(); if let obj=(try? JSONSerialization.jsonObject(with:payload)) as? [String:Any] {
                 let error=(obj["syncMs"] as? Double).map { String(format:"Desfase estimado: %+.0f ms",$0) } ?? "Midiendo sincronización…"
-                self.detailLabel.stringValue=error
+                let buffer=(obj["bufferMs"] as? Int).map { " · Búfer \($0) ms" } ?? ""
+                let gaps=(obj["underruns"] as? Int).map { " · Cortes: \($0)" } ?? ""
+                self.detailLabel.stringValue=error+buffer+gaps
                 if let name=obj["device"] as? String { self.deviceLabel.stringValue="Mac +\n"+String(name.prefix(28)) }
             } }
         }
-        capture.onPacket={ [weak self] p in self?.server.send(2,p) }
+        capture.onPacket={ [weak self] p in
+            guard let self=self else { return }
+            do {
+                if let encoder=self.encoder { for packet in try encoder.encode(p) { if !self.server.ready { break }; self.server.send(10,packet) } }
+                else { self.server.send(2,p) }
+            } catch { self.server.disconnect("No se pudo codificar el audio. Prueba PCM sin pérdida.") }
+        }
         capture.onError={ [weak self] e in self?.server.disconnect(e) }
         if !CommandLine.arguments.contains("--preview") && !CommandLine.arguments.contains("--preview-settings") { do { try server.listen() } catch { stopAudio(message:error.localizedDescription) } }
         watchdog=Timer.scheduledTimer(withTimeInterval:1,repeats:true) { [weak self] _ in
@@ -91,7 +100,7 @@ final class App:NSObject,NSApplicationDelegate {
         stateLabel=label("●  Listo para conectar",15,.medium,mint); put(stateLabel,28,104,304,24)
         deviceLabel=label("Mac +\nTu Android",28,.semibold); put(deviceLabel,28,144,305,78)
         put(label("Audio en ambos dispositivos",16,.regular,NSColor(white:0.76,alpha:1)),28,228,310,25)
-        qualityLabel=label("PCM sin compresión · Perfil estable",13,.regular,muted); put(qualityLabel,28,264,305,24)
+        qualityLabel=label("Calidad adaptable · Lista para conectar",13,.regular,muted); put(qualityLabel,28,264,305,24)
         line(300)
         let speaker=NSImageView(image:NSImage(systemSymbolName:"speaker.wave.2.fill",accessibilityDescription:nil)!); speaker.contentTintColor=ink; put(speaker,28,320,23,23)
         put(label("Volumen del celular",17),60,319,266,27)
@@ -112,15 +121,22 @@ final class App:NSObject,NSApplicationDelegate {
     func startAudio() {
         guard !streaming else { return }
         do {
-            try capture.start(delay:delay,trim:trim,local:local)
-            let config:[String:Any]=["rate":Int(capture.rate),"channels":2,"format":"float32le","delayMs":Int(delay*1000),"version":1,"volume":volume.doubleValue]
+            let request=(try? JSONSerialization.jsonObject(with:server.captureRequest)) as? [String:Any] ?? [:]
+            let wantsAAC=(request["codec"] as? String)=="aac-lc"
+            let requestedDelay=Double(max(120,min(1000,request["reserveMs"] as? Int ?? 0)))/1000
+            let reserve=max(delay,requestedDelay)
+            try capture.start(delay:reserve,trim:trim,local:local)
+            encoder=wantsAAC ? try? AACEncoder(sourceRate:capture.rate,bitRate:(request["bitrate"] as? Int)==160000 ? 160000 : 256000) : nil
+            var config:[String:Any]=["rate":encoder?.rate ?? Int(capture.rate),"channels":2,"format":encoder==nil ? "float32le" : "aac-lc","delayMs":Int(reserve*1000),"version":1,"volume":volume.doubleValue]
+            if let encoder=encoder { config["bitrate"]=encoder.bitRate; config["primingFrames"]=encoder.primingFrames }
+            let quality=encoder.map { "AAC · \($0.bitRate/1000) kbps" } ?? "PCM sin compresión"
             server.send(1,try JSONSerialization.data(withJSONObject:config)); streaming=true; lastHeartbeat=clockNS()
             stateLabel.stringValue="●  Transmitiendo"; deviceLabel.stringValue="Mac +\nGalaxy S25 Ultra"; mainButton.title="Detener transmisión"; tintTitle(mainButton,buttonInk); volume.isEnabled=true
-            qualityLabel.stringValue="PCM sin compresión · \(Int(delay*1000)) ms de reserva"
+            qualityLabel.stringValue="\(quality) · \(Int(reserve*1000)) ms de reserva"
         } catch { server.disconnect(error.localizedDescription); stopAudio(message:error.localizedDescription) }
     }
     func stopAudio(message:String) {
-        capture.stop(); streaming=false; stateLabel.stringValue="●  Listo para conectar"; mainButton.title="Conectar celular"; tintTitle(mainButton,buttonInk); volume.isEnabled=false; deviceLabel.stringValue="Mac +\nTu Android"; qualityLabel.stringValue="PCM sin compresión · Perfil estable"
+        capture.stop(); encoder=nil; streaming=false; stateLabel.stringValue="●  Listo para conectar"; mainButton.title="Conectar celular"; tintTitle(mainButton,buttonInk); volume.isEnabled=false; deviceLabel.stringValue="Mac +\nTu Android"; qualityLabel.stringValue="Calidad adaptable · Lista para conectar"
         detailLabel.stringValue=message
         if !message.isEmpty && message != "Listo para conectar" { stateLabel.stringValue="●  Conexión detenida"; item.button?.toolTip="Unísono: "+message }
     }
@@ -135,8 +151,8 @@ final class App:NSObject,NSApplicationDelegate {
             linkField=NSTextField(); linkField.textColor=ink; linkField.backgroundColor=NSColor(white:0.16,alpha:1); linkField.isEditable=false; linkField.isSelectable=true; linkField.font = .monospacedSystemFont(ofSize:11,weight:.regular); put(linkField,119,32)
             let copy=NSButton(title:"Copiar enlace de conexión",target:self,action:#selector(copyLink)); copy.bezelStyle = .rounded; tintTitle(copy); put(copy,158,33)
             qrView=NSImageView(frame:NSRect(x:160,y:201,width:140,height:140)); qrView.imageScaling = .scaleProportionallyUpOrDown; v.addSubview(qrView)
-            put(label("Reserva de audio",14,.medium),364,24)
-            delayPicker=NSPopUpButton(); delayPicker.addItems(withTitles:["120 ms · Menor retraso","250 ms · Estable","500 ms · Mayor estabilidad"]); delayPicker.selectItem(at:delay<0.2 ? 0 : delay<0.4 ? 1 : 2); delayPicker.target=self; delayPicker.action=#selector(saveSettings); put(delayPicker,391,30)
+            put(label("Reserva mínima de audio",14,.medium),364,24)
+            delayPicker=NSPopUpButton(); delayPicker.addItems(withTitles:["500 ms · Equilibrado","750 ms · Más estable","1000 ms · Reserva máxima"]); delayPicker.selectItem(at:delay<0.6 ? 0 : delay<0.9 ? 1 : 2); delayPicker.target=self; delayPicker.action=#selector(saveSettings); put(delayPicker,391,30)
             localSwitch=NSButton(checkboxWithTitle:"Escuchar también en la Mac",target:self,action:#selector(saveSettings)); tintTitle(localSwitch); localSwitch.state=local ? .on : .off; put(localSwitch,439,25)
             put(label("Ajuste de la Mac (ms, −100 a +100)",14,.medium),479,24)
             trimField=NSTextField(string:String(Int(trim*1000))); trimField.textColor=ink; trimField.backgroundColor=NSColor(white:0.16,alpha:1); trimField.target=self; trimField.action=#selector(saveSettings); put(trimField,509,28)
@@ -152,10 +168,11 @@ final class App:NSObject,NSApplicationDelegate {
     @objc func copyLink() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(linkField.stringValue,forType:.string); detailLabel.stringValue="Enlace copiado. En Android, pégalo en Conectar. Otras IP de esta Mac: "+ips().joined(separator:", ") }
     @objc func saveSettings() {
         let ms=Double(trimField.stringValue.replacingOccurrences(of:",",with:".")) ?? 0
-        UserDefaults.standard.set([0.12,0.25,0.5][delayPicker.indexOfSelectedItem],forKey:"delay"); UserDefaults.standard.set(max(-100,min(100,ms))/1000,forKey:"trim"); UserDefaults.standard.set(localSwitch.state == .on,forKey:"local"); server.endSession("Ajustes guardados. Vuelve a conectar desde Android.")
+        UserDefaults.standard.set([0.5,0.75,1.0][delayPicker.indexOfSelectedItem],forKey:"delay"); UserDefaults.standard.set(max(-100,min(100,ms))/1000,forKey:"trim"); UserDefaults.standard.set(localSwitch.state == .on,forKey:"local"); server.endSession("Ajustes guardados. Vuelve a conectar desde Android.")
     }
     @objc func rotateKey() { server.disconnect(""); secret=randomBytes(16); UserDefaults.standard.set(secret.hex,forKey:"pairKey"); server.secret=secret; openSettings(); detailLabel.stringValue="Clave anterior revocada. Copia el nuevo enlace en el celular." }
     func preview() {
+        qualityLabel.stringValue="AAC · 256 kbps · 500 ms de reserva"
         stateLabel.stringValue="●  Transmitiendo"; deviceLabel.stringValue="Mac +\nGalaxy S25 Ultra"; mainButton.title="Detener transmisión"; tintTitle(mainButton,buttonInk); volume.isEnabled=true
         if CommandLine.arguments.contains("--popover") {
             // Exercise a real popover inside a light/dark host, independent of menu-bar overflow.

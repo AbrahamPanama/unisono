@@ -17,6 +17,7 @@ final class LinkServer {
     var connection: NWConnection?
     var sessionKey: SymmetricKey?
     var secret: Data
+    var captureRequest=Data()
     var ready=false
     var pending=0
     var onReady: (() -> Void)?
@@ -34,7 +35,7 @@ final class LinkServer {
     }
     func stop() { listener?.cancel(); listener=nil; disconnect("") }
     func disconnect(_ why: String) {
-        let had=connection != nil; generation=UUID(); ready=false; sessionKey=nil; pending=0
+        let had=connection != nil; generation=UUID(); ready=false; captureRequest=Data(); sessionKey=nil; pending=0
         connection?.stateUpdateHandler=nil; connection?.cancel(); connection=nil
         if had || !why.isEmpty { onDisconnect?(why) }
     }
@@ -76,7 +77,7 @@ final class LinkServer {
                     guard let type=data.first else { throw NSError(domain:"Protocol",code:1) }
                     let payload=Data(data.dropFirst())
                     if type==3 && payload.count==8 { var out=payload; out.be(clockNS()); self.send(4,out) }
-                    else if type==5 { self.onReady?() }
+                    else if type==5 { self.captureRequest=payload; self.onReady?() }
                     else { self.onCommand?(type,payload) }
                     self.receiveFrame(gen)
                 } catch { self.disconnect("No se pudo autenticar el audio") }

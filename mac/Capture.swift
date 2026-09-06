@@ -15,7 +15,7 @@ final class Capture {
     var onPacket:((Data)->Void)?
     var onError:((String)->Void)?
     var rate=48000.0, frameIndex:UInt64=0
-    var delay=0.25, trim=0.0, local=true
+    var delay=0.5, trim=0.0, local=true
     var started=false, firstCapture:UInt64=0
     var scratch=[Float](repeating:0,count:8192)
     var seenOverflow:UInt64=0
@@ -59,7 +59,7 @@ final class Capture {
             let ns=UInt64(AVAudioTime.seconds(forHostTime:host)*1e9)
             if firstCapture==0 { firstCapture=ns }
             let pts=firstCapture+UInt64(Double(frameIndex)/rate*1e9)
-            if clockNS()>pts+UInt64(delay*1e9) { onError?("El audio llegó tarde. Prueba el perfil de 500 ms."); return }
+            if clockNS()>pts+UInt64(delay*1e9) { onError?("El audio llegó tarde. Aumenta la reserva mínima de audio."); return }
             var packet=Data(); packet.be(pts); packet.be(frameIndex); packet.be(n)
             scratch.withUnsafeBytes { packet.append(contentsOf:$0.prefix(Int(n)*8)) }
             onPacket?(packet)
@@ -67,7 +67,8 @@ final class Capture {
             // Scheduling local audio uses the same source timeline sent to Android.
             if let p=player,let f=format,let b=AVAudioPCMBuffer(pcmFormat:f,frameCapacity:n) {
                 b.frameLength=n
-                for i in 0..<Int(n) { b.floatChannelData![0][i]=scratch[2*i]; b.floatChannelData![1][i]=scratch[2*i+1] }
+                for i in 0..<Int(n) { let gain=Float(min(1,Double(frameIndex+UInt64(i))/(rate*0.01)))
+                    b.floatChannelData![0][i]=scratch[2*i]*gain; b.floatChannelData![1][i]=scratch[2*i+1]*gain }
                 let outputLatency=engine?.outputNode.presentationLatency ?? 0
                 if !started {
                     let startNS=Double(pts)/1e9+delay+trim-outputLatency

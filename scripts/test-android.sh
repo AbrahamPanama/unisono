@@ -14,8 +14,11 @@ bash "$ROOT/scripts/build-focus-fixture.sh"
 "${ADB[@]}" install -r -g "$ROOT/build/android/Unisono-test.apk"
 "${ADB[@]}" install -r "$ROOT/build/focus-fixture/focus-fixture.apk"
 mkdir -p "$ROOT/build/tests"
-xcrun swiftc -swift-version 5 "$ROOT/mac/Protocol.swift" "$ROOT/tests/main.swift" -o "$ROOT/build/tests/wire-server"
-"$ROOT/build/tests/wire-server" --long > "$ROOT/build/tests/emulator-server.log" 2>&1 &
+xcrun swiftc -swift-version 5 "$ROOT/mac/Protocol.swift" "$ROOT/mac/AACEncoder.swift" "$ROOT/tests/main.swift" -o "$ROOT/build/tests/wire-server"
+SERVER_ARGS=(--long)
+TEST_ARGS=(-e stability false)
+if [ "${UNISONO_JITTER:-0}" = "1" ]; then SERVER_ARGS+=(--jitter); TEST_ARGS=(-e stability true); fi
+"$ROOT/build/tests/wire-server" "${SERVER_ARGS[@]}" > "$ROOT/build/tests/emulator-server.log" 2>&1 &
 SERVER_PID=$!
 cleanup() {
   kill "$SERVER_PID" 2>/dev/null || true
@@ -25,6 +28,7 @@ cleanup() {
 trap cleanup EXIT
 sleep 1
 kill -0 "$SERVER_PID"
-RESULT="$("${ADB[@]}" shell am instrument -w app.unisono/app.unisono.SmokeTest)"
+TEST_ARGS+=(-e quality "${UNISONO_TEST_QUALITY:-balanced}")
+RESULT="$("${ADB[@]}" shell am instrument -w "${TEST_ARGS[@]}" app.unisono/app.unisono.SmokeTest)"
 printf '%s\n' "$RESULT"
-[[ "$RESULT" == *'PASS: encrypted PCM playback'* ]]
+[[ "$RESULT" == *'PASS: audio playback'* ]]

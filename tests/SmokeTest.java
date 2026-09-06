@@ -10,6 +10,8 @@ import java.io.*;
 /** Installed only in the test APK; exercises the real Activity, service, socket and AudioTrack. */
 public class SmokeTest extends Instrumentation {
     private volatile Boolean fixturePlaying;
+    private boolean stability;
+    private String selectedQuality;
     private final BroadcastReceiver fixtureState=new BroadcastReceiver() {
         @Override public void onReceive(Context c,Intent i) { fixturePlaying=i.getBooleanExtra("playing",false); }
     };
@@ -49,7 +51,7 @@ public class SmokeTest extends Instrumentation {
         if(!AudioService.connected) throw new AssertionError("Connection failed: "+AudioService.status);
         Thread.sleep(1000);
     }
-    @Override public void onCreate(Bundle args) { super.onCreate(args); start(); }
+    @Override public void onCreate(Bundle args) { super.onCreate(args); stability="true".equals(args.getString("stability")); selectedQuality=args.getString("quality","balanced"); start(); }
     private View find(View v,String text) {
         if(v instanceof Button && ((Button)v).getText().toString().equals(text)) return v;
         if(v instanceof ViewGroup) { ViewGroup g=(ViewGroup)v; for(int i=0;i<g.getChildCount();i++) { View hit=find(g.getChildAt(i),text); if(hit!=null) return hit; } } return null;
@@ -62,11 +64,21 @@ public class SmokeTest extends Instrumentation {
         try {
             if(Build.VERSION.SDK_INT>=33) getTargetContext().registerReceiver(fixtureState,new IntentFilter("app.unisono.TEST_PLAYER_STATE"),Context.RECEIVER_EXPORTED);
             else getTargetContext().registerReceiver(fixtureState,new IntentFilter("app.unisono.TEST_PLAYER_STATE"));
-            getTargetContext().getSharedPreferences("playback",Context.MODE_PRIVATE).edit().putBoolean("mixWithOtherApps",true).commit();
+            getTargetContext().getSharedPreferences("playback",Context.MODE_PRIVATE).edit().putBoolean("mixWithOtherApps",true).putString("quality",selectedQuality).commit();
+            if(!stability) AacRoundTrip.run("unisono://10.0.2.2:45871#11111111111111111111111111111111");
             Intent intent=new Intent(Intent.ACTION_VIEW,android.net.Uri.parse("unisono://10.0.2.2:45871#11111111111111111111111111111111"),getTargetContext(),MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             Activity a=startActivitySync(intent); waitForIdleSync(); Thread.sleep(1000); save(a,"android-idle.png");
             runOnMainSync(()-> { View b=find(a.getWindow().getDecorView(),"Conectar"); if(b==null) throw new AssertionError("Connect button missing"); b.performClick(); });
-            awaitConnection(); advancing(); save(a,"android-connected.png");
+            awaitConnection();
+            if(stability) {
+                long deadline=System.nanoTime()+25_000_000_000L;
+                while(System.nanoTime()<deadline && !(AudioService.connected && ("lossless".equals(selectedQuality) ? AudioService.details.startsWith("PCM") : AudioService.details.contains("160 kbps")) && (AudioService.details.contains("750 ms")||AudioService.details.contains("1000 ms")))) Thread.sleep(200);
+                if(!AudioService.connected||!("lossless".equals(selectedQuality) ? AudioService.details.startsWith("PCM") : AudioService.details.contains("160 kbps"))||AudioService.details.contains("Reserva 500 ms")) throw new AssertionError("No adaptive recovery: "+AudioService.status+" / "+AudioService.details);
+                Thread.sleep(2000); advancing();
+                getTargetContext().stopService(new Intent(getTargetContext(),AudioService.class));
+                result.putString("stream","PASS: audio playback recovery from an 850 ms network stall; "+AudioService.details); finish(Activity.RESULT_OK,result);return;
+            }
+            advancing(); if(!AudioService.details.startsWith("lossless".equals(selectedQuality) ? "PCM" : "AAC")) throw new AssertionError("Wrong codec selected"); save(a,"android-connected.png");
             fixture("silent",false); advancing();
             fixture("play",true); advancing();
             if(a.hasWindowFocus()) throw new AssertionError("Receiver Activity did not enter background");
@@ -91,7 +103,7 @@ public class SmokeTest extends Instrumentation {
             fixture("silent",false);
             getTargetContext().getSharedPreferences("playback",Context.MODE_PRIVATE).edit().putBoolean("mixWithOtherApps",true).commit();
             getTargetContext().unregisterReceiver(fixtureState);
-            result.putString("stream","PASS: encrypted PCM playback, background Activity, mixing in both start orders with a separate-UID media player, normal-mode focus loss, explicit disconnect."); finish(Activity.RESULT_OK,result);
+            result.putString("stream","PASS: audio playback with AAC round-trip validation, background Activity, mixing in both start orders with a separate-UID media player, normal-mode focus loss, explicit disconnect."); finish(Activity.RESULT_OK,result);
         } catch(Throwable e) { result.putString("stream","FAIL: "+e.toString()+"; "+AudioService.status); finish(Activity.RESULT_CANCELED,result); }
     }
 }

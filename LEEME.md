@@ -1,6 +1,6 @@
-# Unísono 0.1.1 · Versión de prueba personal
+# Unísono 0.2.0 · Versión de prueba personal
 
-Audio de tu Mac a Android por la red local, con reproducción simultánea y transmisión PCM cifrada. App nativa de barra de menú para Apple Silicon; receptor nativo Android 8 o posterior. Preparada para probar con Mac mini M4 y Galaxy S25 Ultra.
+Audio de tu Mac a Android por la red local, con reproducción simultánea y transmisión AAC o PCM cifrada. App nativa de barra de menú para Apple Silicon; receptor nativo Android 8 o posterior. Preparada para probar con Mac mini M4 y Galaxy S25 Ultra.
 
 ## Instalar y conectar
 
@@ -19,16 +19,30 @@ El QR y el enlace contienen una clave privada de escucha. **Revocar clave y crea
 - Cerrar el panel mantiene la transmisión. **Salir de Unísono** cierra la app.
 - El deslizador de la Mac cambia el volumen de la reproducción de Unísono en Android. El teléfono también tiene su propio deslizador. No modifica el volumen general del sistema Android.
 - **Escuchar también en la Mac** permite elegir reproducción simultánea o solo en el celular.
-- Perfiles de reserva: **120 ms**, **250 ms (inicial)** y **500 ms**. La reserva no equivale a la latencia total medida; se suma el comportamiento de la salida de audio y la red.
+- Reserva mínima en la Mac: **500 ms (inicial)**, **750 ms** y **1000 ms**. Android puede pedir una reserva mayor durante la recuperación; ambos equipos usan el mismo valor. La reserva no equivale a la latencia total medida; se suma el comportamiento de la salida de audio y la red.
 - **Ajuste de la Mac**: valores positivos retrasan la Mac respecto al celular; valores negativos la adelantan. Cambiar ajustes termina la sesión para que puedas reconectar con los nuevos valores.
 - La app intenta reconectar hasta tres veces ante un fallo de red. Una detención explícita desde la Mac no activa esta reconexión.
 - Android mantiene una notificación para seguir escuchando al abrir otras apps.
 - **Mezclar con otras apps**, activado inicialmente, permite escuchar Unísono junto a Spotify u otro reproductor. Desconecta para cambiarlo. Al desactivarlo, Unísono solicita el foco de audio y se detiene cuando otra app lo reclama.
 - Si Android indica modo de llamada, timbre o comunicación, Unísono detiene la sesión; vuelve a conectar después. Las apps de llamadas que no informen ese modo pueden no detectarse. La mezcla con Spotify en el S25 físico todavía requiere prueba.
 
+## Calidad adaptable
+
+En Android, desconecta para elegir el modo:
+
+- **Equilibrado · AAC adaptable:** AAC-LC a 256 kbps inicialmente y reserva de 500 ms. Durante la recuperación puede bajar a 160 kbps.
+- **Más estable · AAC 160 kbps:** comienza con una reserva de 750 ms y menor tráfico.
+- **Sin pérdida · PCM:** conserva las muestras transmitidas y nunca cambia automáticamente a AAC.
+
+**AAC tiene pérdida.** El modo elegido se guarda, y los indicadores muestran el formato y la reserva realmente usados. Actualiza ambas apps para disponer de AAC y la reserva compartida adaptable. Si AAC no puede inicializarse, se intenta PCM y se indica en pantalla.
+
+Android comienza con unos 100 ms de audio preparados, agrupa los paquetes PCM pequeños, aumenta su búfer de salida después de cortes, suaviza el volumen y realiza correcciones de reloj más lentas. Tras un fallo, cortes repetidos o un desfase grande persistente, reconecta con 250 ms adicionales de reserva, hasta 1000 ms. La recuperación produce una pausa breve; no se promete un cambio de códec sin interrupción. La Mac y el celular reinician juntos con esa reserva. Cada inicio manual restablece el perfil seleccionado.
+
+Se verificó la recuperación tras una interrupción artificial de 850 ms, tanto con AAC como con PCM. Todavía debe comprobarse si estos cambios eliminan los chasquidos del S25 físico. Una señal Wi-Fi fuerte no descarta problemas de programación, búfer, salida de audio o saturación del audio original.
+
 ## Calidad y sincronización: alcance real
 
-La transmisión conserva exactamente las muestras PCM que entrega el tap de Core Audio, sin códec con pérdida. Formato: estéreo, flotante de 32 bits little-endian, a la frecuencia de la salida capturada (48 kHz en esta Mac durante la prueba). A 48 kHz son aproximadamente 3,07 Mbps de PCM, más el protocolo.
+En modo PCM, la transmisión conserva exactamente las muestras PCM que entrega el tap de Core Audio, sin códec con pérdida. Formato: estéreo, flotante de 32 bits little-endian, a la frecuencia de la salida capturada (48 kHz en esta Mac durante la prueba). A 48 kHz son aproximadamente 3,07 Mbps de PCM, más el protocolo.
 
 Esto **no promete salida bit-perfect** desde el archivo original hasta el DAC. El mezclador de macOS puede modificar el audio antes de capturarlo; Android puede mezclar, cambiar frecuencia o procesar la salida. Unísono usa `AudioTimestamp` y pequeños ajustes de velocidad en Android para compensar la diferencia entre relojes: la transmisión es exacta, pero esa corrección modifica la reproducción. El volumen también modifica las muestras reproducidas.
 
@@ -41,7 +55,9 @@ Ambos extremos comparten marcas de tiempo mediante un intercambio de reloj. La M
 - Prueba de interoperabilidad Swift/Java: cifrado AES-GCM, 8192 cuadros estéreo comparados bit a bit, mensajes de reloj, volumen, reconexión y rechazo de clave incorrecta.
 - Pruebas del búfer de captura: FIFO, PCM intercalado y planar, cola vacía y desbordamiento acotado.
 - Captura real en esta Mac: 719360 cuadros en unos 15 segundos, con señal no nula. Solo se conservaron estadísticas; no se guardó el audio.
-- Prueba instrumentada en emulador Android 15: reproducción cifrada en segundo plano, mezcla con otra app de música en ambos órdenes de inicio, dos pistas activas sin silenciamiento en el mezclador, detención al perder foco con la mezcla desactivada y desconexión explícita.
+- Prueba instrumentada en emulador Android 15: decodificación AAC nativa a 256 y 160 kbps con comprobación de alineación y señal sintética, reproducción cifrada en segundo plano, mezcla con otra app de música en ambos órdenes de inicio, dos pistas activas sin silenciamiento en el mezclador, detención al perder foco con la mezcla desactivada y desconexión explícita.
+- Recuperación tras interrupciones artificiales de 850 ms: reserva aumentada a 750 ms, con AAC a 160 kbps o manteniendo PCM sin pérdida.
+- Captura real de la Mac codificada a AAC durante unos ocho segundos, sin guardar audio.
 - Revisión visual de vistas nativas Mac y pantallas renderizadas de Android. Capturas del popover real idénticas con apariencia anfitriona clara y oscura. Texto claro sobre fondo oscuro; el texto oscuro está reservado al botón verde claro.
 
 **Pendiente:** instalación y prueba en el S25 Ultra físico, medición acústica de sincronización/latencia, pruebas largas y comprobación con tus audífonos o altavoces. El emulador no representa el rendimiento del S25 ni de tu Wi-Fi. Esta es una primera versión funcional para pruebas, no una versión comercial certificada.
@@ -50,7 +66,7 @@ Ambos extremos comparten marcas de tiempo mediante un intercambio de reloj. La M
 
 - **No conecta:** abre Configuración en la Mac y vuelve a copiar el enlace. La IP puede cambiar al cambiar de red. Si hay varias interfaces, prueba otra IP mostrada al copiar el enlace. Puerto TCP: 45871. Autoriza conexiones entrantes si el firewall de macOS pregunta.
 - **Sin sonido:** revisa el permiso de grabación de audio del sistema para Unísono en Privacidad y seguridad de macOS. Confirma que otra app de la Mac está reproduciendo. Algunas fuentes protegidas pueden no permitir captura.
-- **Cortes o reconexiones:** prueba 500 ms, acerca el teléfono al router y evita redes de invitados. Si Android suspende la app, revisa sus ajustes de batería.
+- **Cortes o reconexiones:** prueba **Más estable · AAC 160 kbps** o una reserva mínima de 1000 ms, acerca el teléfono al router y evita redes de invitados. Si Android suspende la app, revisa sus ajustes de batería.
 - **Eco:** mantén ambos altavoces cerca para comparar y ajusta el retraso de la Mac. No se ha garantizado sincronía acústica exacta.
 - **Cambio de salida o reposo:** Unísono detiene o reinicia la sesión para evitar seguir con un reloj o dispositivo obsoleto; reconecta si es necesario.
 
@@ -64,6 +80,6 @@ Para Android: define `JAVA_HOME` con JDK 17 y `ANDROID_HOME` con un SDK que cont
 
 Para las pruebas de protocolo: detén Unísono para liberar el puerto 45871, define `JAVA_HOME` y ejecuta `bash scripts/test.sh`.
 
-Para las pruebas de reproducción, con un emulador Android 15 iniciado, ejecuta `bash scripts/test-android.sh`. Instala las apps de prueba únicamente en el emulador.
+Para las pruebas de reproducción, con un emulador Android 15 iniciado, ejecuta `bash scripts/test-android.sh`. Instala las apps de prueba únicamente en el emulador. `UNISONO_JITTER=1 bash scripts/test-android.sh` comprueba la recuperación AAC; añade `UNISONO_TEST_QUALITY=lossless` para comprobar PCM.
 
 Configura las rutas de Java y del SDK según tu entorno. La app de Mac está firmada ad hoc y no está notarizada para distribución pública. Los instaladores se encuentran en la sección Releases del repositorio.
